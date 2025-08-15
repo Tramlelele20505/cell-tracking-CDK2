@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Open Cell Image Viewer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 50px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        .container {
+            background: rgba(255,255,255,0.1);
+            padding: 40px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            max-width: 500px;
+        }
+        h1 {
+            margin-bottom: 20px;
+        }
+        .btn {
+            display: inline-block;
+            background: white;
+            color: #667eea;
+            padding: 15px 30px;
+            text-decoration: none;
+            border-radius: 50px;
+            font-weight: bold;
+            margin: 10px;
+            transition: transform 0.3s ease;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔬 Cell Image Viewer</h1>
+        <p>Click one of the links below to open the Cell Image Viewer application:</p>
+        
+        <a href="http://localhost:5003" class="btn" target="_blank">
+            🌐 Open File-by-File Cell Selector (localhost)
+        </a>
+        
+        <a href="http://127.0.0.1:5003" class="btn" target="_blank">
+            🔗 Open File-by-File Cell Selector (127.0.0.1)
+        </a>
+        
+        <a href="http://192.168.4.32:5003" class="btn" target="_blank">
+            🌍 Open File-by-File Cell Selector (Network IP)
+        </a>
+        
+        <div class="status">
+            <p><strong>Status:</strong> File-by-File Cell Selector is running!</p>
+            <p><strong>Port:</strong> 5003</p>
+            <p><strong>Images Found:</strong> 4715 pairs</p>
+            <p><strong>Image Format:</strong> TIFF → JPEG conversion enabled</p>
+            <p><strong>Features:</strong> Square box selection + Auto-tracking + Perfect alignment + File-by-file navigation (4715 files)</p>
+        </div>
+    </div>
+    
+    <script>
+        // Auto-redirect after 3 seconds
+        setTimeout(function() {
+            window.open('http://localhost:5003', '_blank');
+        }, 3000);
+    </script>
+</body>
+</html>
