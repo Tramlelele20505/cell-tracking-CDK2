@@ -16,6 +16,9 @@ from PIL import Image
 import io
 from io import BytesIO
 import requests
+import openpyxl
+from openpyxl import Workbook
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -441,7 +444,8 @@ def measure_both_whiteness():
     data = request.json
     nucleus_path = data.get("nucleusPath")
     cytoplasm_path = data.get("cytoplasmPath")
-    selection = data.get("selection")
+    nucleus_selection = data.get("nucleusSelection")
+    cytoplasm_selection = data.get("cytoplasmSelection")
 
     # Strip domain if URL passed
     if nucleus_path.startswith("http"):
@@ -461,40 +465,194 @@ def measure_both_whiteness():
     if not os.path.exists(cytoplasm_abs):
         return jsonify({"error": f"Cytoplasm image not found at {cytoplasm_abs}"}), 400
 
-    # Load as grayscale
-    nucleus_img = cv2.imread(nucleus_abs, cv2.IMREAD_GRAYSCALE)
+    # Load the right image (ch002) as grayscale - this is the only image we need for whiteness calculation
     cytoplasm_img = cv2.imread(cytoplasm_abs, cv2.IMREAD_GRAYSCALE)
-    if nucleus_img is None or cytoplasm_img is None:
-        return jsonify({"error": "Failed to read one or both images"}), 400
+    if cytoplasm_img is None:
+        return jsonify({"error": "Failed to read cytoplasm image"}), 400
 
-    # Convert % selection to pixels
-    h, w = nucleus_img.shape
-    x = int(selection["x"] / 100 * w)
-    y = int(selection["y"] / 100 * h)
-    width = int(selection["width"] / 100 * w)
-    height = int(selection["height"] / 100 * h)
+    results = {}
 
-    # Crop images
-    nucleus_crop = nucleus_img[y:y+height, x:x+width]
-    cytoplasm_crop = cytoplasm_img[y:y+height, x:x+width]
+    # Process nucleus selection (same coordinates applied to right image)
+    if nucleus_selection:
+        h, w = cytoplasm_img.shape
+        x = int(nucleus_selection["x"] / 100 * w)
+        y = int(nucleus_selection["y"] / 100 * h)
+        width = int(nucleus_selection["width"] / 100 * w)
+        height = int(nucleus_selection["height"] / 100 * h)
 
-    # Function to calculate % whiteness
-    def percent_white(crop, threshold=200):
-        if crop.size == 0:
-            return 0.0
-        white_pixels = np.sum(crop >= threshold)
-        return white_pixels / crop.size
+        # Crop nucleus from the right image (ch002)
+        nucleus_crop = cytoplasm_img[y:y+height, x:x+width]
 
-    nucleus_whiteness = float(np.mean(nucleus_crop)) /255.0
-    cytoplasm_whiteness = float(np.mean(cytoplasm_crop))/255.0
-    max_possible = 255.0
+        # Calculate whiteness for nucleus selection
+        if nucleus_crop.size > 0:
+            # Calculate average pixel intensity for normalization
+            avg_pixel_intensity = np.mean(nucleus_crop)
+            
+            # Whiteness = grayscale / average pixel intensity
+            nucleus_whiteness = float(np.mean(nucleus_crop)) / avg_pixel_intensity if avg_pixel_intensity > 0 else 0.0
+            
+            results["nucleus_selection"] = {
+                "whiteness": nucleus_whiteness,
+                "avg_pixel_intensity": float(avg_pixel_intensity),
+                "mean_grayscale": float(np.mean(nucleus_crop))
+            }
+
+    # Process cytoplasm selection (directly on right image)
+    if cytoplasm_selection:
+        h, w = cytoplasm_img.shape
+        x = int(cytoplasm_selection["x"] / 100 * w)
+        y = int(cytoplasm_selection["y"] / 100 * h)
+        width = int(cytoplasm_selection["width"] / 100 * w)
+        height = int(cytoplasm_selection["height"] / 100 * h)
+
+        # Crop cytoplasm from the right image (ch002)
+        cytoplasm_crop = cytoplasm_img[y:y+height, x:x+width]
+
+        # Calculate whiteness for cytoplasm selection
+        if cytoplasm_crop.size > 0:
+            # Calculate average pixel intensity for normalization
+            avg_pixel_intensity = np.mean(cytoplasm_crop)
+            
+            # Whiteness = grayscale / average pixel intensity
+            cytoplasm_whiteness = float(np.mean(cytoplasm_crop)) / avg_pixel_intensity if avg_pixel_intensity > 0 else 0.0
+            
+            results["cytoplasm_selection"] = {
+                "whiteness": cytoplasm_whiteness,
+                "avg_pixel_intensity": float(avg_pixel_intensity),
+                "mean_grayscale": float(np.mean(cytoplasm_crop))
+            }
+
+    return jsonify(results)
 
 
-    return jsonify({
-        "nucleus_whiteness": nucleus_whiteness,  # 0.0–1.0
-        "cytoplasm_whiteness": cytoplasm_whiteness,  # 0.0–1.0
-        "max_possible": 1.0
-    })
+@app.route('/api/auto-track', methods=['POST'])
+def auto_track():
+    """
+    Automatically track whiteness through a sequence of timepoints
+    """
+    data = request.json
+    start_timepoint = data.get("startTimepoint")
+    end_timepoint = data.get("endTimepoint")
+    nucleus_selection = data.get("nucleusSelection")
+    cytoplasm_selection = data.get("cytoplasmSelection")
+    
+    if not all([start_timepoint, end_timepoint, nucleus_selection, cytoplasm_selection]):
+        return jsonify({"error": "Missing required parameters"}), 400
+    
+    # Get all timepoints
+    image_pairs = get_image_files()
+    timepoints = list(image_pairs.keys())
+    
+    if start_timepoint >= len(timepoints) or end_timepoint >= len(timepoints):
+        return jsonify({"error": "Invalid timepoint range"}), 400
+    
+    tracking_results = []
+    
+    # Process each timepoint in the range
+    for i in range(start_timepoint, end_timepoint + 1):
+        try:
+            # Get the image pair for this timepoint
+            base_name = timepoints[i]
+            nucleus_filename = f"{base_name}_ch00.tif"
+            cytoplasm_filename = f"{base_name}_ch02.tif"
+            
+            nucleus_abs = os.path.join(CH00_FOLDER, nucleus_filename)
+            cytoplasm_abs = os.path.join(CH002_FOLDER, cytoplasm_filename)
+            
+            if not os.path.exists(nucleus_abs) or not os.path.exists(cytoplasm_abs):
+                print(f"Warning: Missing files for timepoint {i}")
+                continue
+            
+            # Load the right image (ch002) as grayscale
+            cytoplasm_img = cv2.imread(cytoplasm_abs, cv2.IMREAD_GRAYSCALE)
+            if cytoplasm_img is None:
+                print(f"Warning: Failed to read cytoplasm image for timepoint {i}")
+                continue
+            
+            # Calculate whiteness for nucleus selection
+            h, w = cytoplasm_img.shape
+            x = int(nucleus_selection["x"] / 100 * w)
+            y = int(nucleus_selection["y"] / 100 * h)
+            width = int(nucleus_selection["width"] / 100 * w)
+            height = int(nucleus_selection["height"] / 100 * h)
+            
+            nucleus_crop = cytoplasm_img[y:y+height, x:x+width]
+            nucleus_whiteness = 0.0
+            if nucleus_crop.size > 0:
+                avg_pixel_intensity = np.mean(nucleus_crop)
+                nucleus_whiteness = float(np.mean(nucleus_crop)) / avg_pixel_intensity if avg_pixel_intensity > 0 else 0.0
+            
+            # Calculate whiteness for cytoplasm selection
+            x = int(cytoplasm_selection["x"] / 100 * w)
+            y = int(cytoplasm_selection["y"] / 100 * h)
+            width = int(cytoplasm_selection["width"] / 100 * w)
+            height = int(cytoplasm_selection["height"] / 100 * h)
+            
+            cytoplasm_crop = cytoplasm_img[y:y+height, x:x+width]
+            cytoplasm_whiteness = 0.0
+            if cytoplasm_crop.size > 0:
+                avg_pixel_intensity = np.mean(cytoplasm_crop)
+                cytoplasm_whiteness = float(np.mean(cytoplasm_crop)) / avg_pixel_intensity if avg_pixel_intensity > 0 else 0.0
+            
+            # Store results
+            tracking_results.append({
+                "timepoint": i,
+                "filename": base_name,
+                "nucleus_whiteness": nucleus_whiteness,
+                "cytoplasm_whiteness": cytoplasm_whiteness,
+                "nucleus_mean_grayscale": float(np.mean(nucleus_crop)) if nucleus_crop.size > 0 else 0.0,
+                "cytoplasm_mean_grayscale": float(np.mean(cytoplasm_crop)) if cytoplasm_crop.size > 0 else 0.0
+            })
+            
+            print(f"Processed timepoint {i}: Nucleus={nucleus_whiteness:.4f}, Cytoplasm={cytoplasm_whiteness:.4f}")
+            
+        except Exception as e:
+            print(f"Error processing timepoint {i}: {str(e)}")
+            continue
+    
+    # Create Excel file
+    try:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Whiteness Tracking Results"
+        
+        # Add headers
+        headers = [
+            "Timepoint", "Filename", "Nucleus Whiteness", "Cytoplasm Whiteness",
+            "Nucleus Mean Grayscale", "Cytoplasm Mean Grayscale"
+        ]
+        for col, header in enumerate(headers, 1):
+            ws.cell(row=1, column=col, value=header)
+        
+        # Add data
+        for row, result in enumerate(tracking_results, 2):
+            ws.cell(row=row, column=1, value=result["timepoint"])
+            ws.cell(row=row, column=2, value=result["filename"])
+            ws.cell(row=row, column=3, value=result["nucleus_whiteness"])
+            ws.cell(row=row, column=4, value=result["cytoplasm_whiteness"])
+            ws.cell(row=row, column=5, value=result["nucleus_mean_grayscale"])
+            ws.cell(row=row, column=6, value=result["cytoplasm_mean_grayscale"])
+        
+        # Save Excel file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        excel_filename = f"whiteness_tracking_{start_timepoint}_to_{end_timepoint}_{timestamp}.xlsx"
+        excel_path = os.path.join("static", excel_filename)
+        
+        # Ensure static directory exists
+        os.makedirs("static", exist_ok=True)
+        
+        wb.save(excel_path)
+        
+        return jsonify({
+            "success": True,
+            "message": f"Tracking complete! Processed {len(tracking_results)} timepoints.",
+            "results": tracking_results,
+            "excel_file": excel_filename,
+            "download_url": f"/static/{excel_filename}"
+        })
+        
+    except Exception as e:
+        return jsonify({"error": f"Failed to create Excel file: {str(e)}"}), 500
 
 
 if __name__ == '__main__':
