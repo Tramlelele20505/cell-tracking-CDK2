@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Cell Images - Cell Tracking App</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 2.5em;
+            font-weight: 300;
+        }
+        
+        .header p {
+            margin: 10px 0 0 0;
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        
+        .content {
+            padding: 40px;
+        }
+        
+        .upload-section {
+            margin-bottom: 40px;
+            padding: 30px;
+            border: 2px dashed #ddd;
+            border-radius: 10px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+        
+        .upload-section:hover {
+            border-color: #667eea;
+            background-color: #f8f9ff;
+        }
+        
+        .upload-section h3 {
+            margin: 0 0 20px 0;
+            color: #333;
+            font-size: 1.5em;
+        }
+        
+        .upload-section p {
+            margin: 0 0 20px 0;
+            color: #666;
+            font-size: 1em;
+        }
+        
+        .file-input {
+            display: none;
+        }
+        
+        .file-label {
+            display: inline-block;
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
+            font-size: 1.1em;
+        }
+        
+        .file-label:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .selected-files {
+            margin-top: 20px;
+            text-align: left;
+        }
+        
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin: 5px 0;
+            font-size: 0.9em;
+        }
+        
+        .file-name {
+            flex: 1;
+            margin-right: 10px;
+        }
+        
+        .file-size {
+            color: #666;
+            font-size: 0.8em;
+        }
+        
+        .remove-file {
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 25px;
+            height: 25px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .submit-btn {
+            display: block;
+            width: 100%;
+            padding: 20px;
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.2em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 30px;
+        }
+        
+        .submit-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(40, 167, 69, 0.3);
+        }
+        
+        .submit-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .back-btn {
+            display: inline-block;
+            padding: 15px 30px;
+            background: #6c757d;
+            color: white;
+            text-decoration: none;
+            border-radius: 25px;
+            transition: all 0.3s ease;
+            margin-top: 20px;
+        }
+        
+        .back-btn:hover {
+            background: #5a6268;
+            transform: translateY(-2px);
+        }
+        
+        .instructions {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-radius: 0 8px 8px 0;
+        }
+        
+        .instructions h4 {
+            margin: 0 0 10px 0;
+            color: #1976d2;
+        }
+        
+        .instructions ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+        
+        .instructions li {
+            margin: 5px 0;
+            color: #424242;
+        }
+        
+        .channel-info {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .channel-card {
+            flex: 1;
+            padding: 20px;
+            border-radius: 10px;
+            border: 2px solid #e9ecef;
+        }
+        
+        .channel-card.ch00 {
+            border-color: #007bff;
+            background: #f8f9ff;
+        }
+        
+        .channel-card.ch002 {
+            border-color: #28a745;
+            background: #f8fff9;
+        }
+        
+        .channel-card h4 {
+            margin: 0 0 10px 0;
+            text-align: center;
+        }
+        
+        .channel-card.ch00 h4 {
+            color: #007bff;
+        }
+        
+        .channel-card.ch002 h4 {
+            color: #28a745;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📁 Upload Cell Images</h1>
+            <p>Upload your cell images to both channels for analysis</p>
+        </div>
+        
+        <div class="content">
+            <div class="instructions">
+                <h4>📋 Upload Instructions</h4>
+                <ul>
+                    <li><strong>Channel 1 (Nucleus Only):</strong> Select one or more TIFF images</li>
+                    <li><strong>Channel 2 (Nucleus + Cytoplasm):</strong> Select the corresponding TIFF images</li>
+                    <li><strong>File Matching:</strong> Files with the same base name will be paired automatically</li>
+                    <li><strong>Supported Formats:</strong> TIF, TIFF, JPG, JPEG, PNG, BMP</li>
+                    <li><strong>Tip:</strong> Upload in batches of 100–200 images for reliability</li>
+                    <li><strong>Upload Size:</strong> Up to 2 GB total per upload (browser limits may apply)</li>
+                </ul>
+            </div>
+            
+            <form method="POST" enctype="multipart/form-data">
+                <div class="channel-info">
+                    <div class="channel-card ch00">
+                        <h4>🔵 Channel 1: Nucleus Only</h4>
+                        <p>Upload images showing only the cell nucleus</p>
+                    </div>
+                    <div class="channel-card ch002">
+                        <h4>🟢 Channel 2: Nucleus + Cytoplasm</h4>
+                        <p>Upload corresponding images showing both nucleus and cytoplasm</p>
+                    </div>
+                </div>
+                
+                <div class="upload-section">
+                    <h3>🔵 Channel 1: Nucleus Only Images</h3>
+                    <p>Select one or more nucleus (ch00) images</p>
+                    <input type="file" id="ch00_files" name="ch00_files" class="file-input" multiple accept=".tif,.tiff,.jpg,.jpeg,.png,.bmp">
+                    <label for="ch00_files" class="file-label">Choose Files</label>
+                    <div id="ch00_file_list" class="selected-files"></div>
+                </div>
+                
+                <div class="upload-section">
+                    <h3>🟢 Channel 2: Nucleus + Cytoplasm Images</h3>
+                    <p>Select one or more nucleus+cytoplasm (ch002) images</p>
+                    <input type="file" id="ch002_files" name="ch002_files" class="file-input" multiple accept=".tif,.tiff,.jpg,.jpeg,.png,.bmp">
+                    <label for="ch002_files" class="file-label">Choose Files</label>
+                    <div id="ch002_file_list" class="selected-files"></div>
+                </div>
+                
+                <button type="submit" class="submit-btn" id="submit-btn">
+                    📤 Upload Selected File(s)
+                </button>
+            </form>
+            
+            <a href="/" class="back-btn">← Back to Main App</a>
+        </div>
+    </div>
+    
+    <script>
+        // Handle file selection for Channel 1
+        document.getElementById('ch00_files').addEventListener('change', function(e) {
+            const fileList = document.getElementById('ch00_file_list');
+            fileList.innerHTML = '';
+            Array.from(e.target.files).filter(f => /\.(tif|tiff|jpg|jpeg|png|bmp)$/i.test(f.name)).forEach((file, index) => {
+                const item = document.createElement('div');
+                item.className = 'file-item';
+                item.innerHTML = `
+                    <span class="file-name">${file.name}</span>
+                    <span class="file-size">${(file.size/1024/1024).toFixed(2)} MB</span>
+                    <button type="button" class="remove-file" onclick="removeFile('ch00_files', ${index})">×</button>
+                `;
+                fileList.appendChild(item);
+            });
+            updateSubmitButton();
+        });
+
+        // Handle file selection for Channel 2
+        document.getElementById('ch002_files').addEventListener('change', function(e) {
+            const fileList = document.getElementById('ch002_file_list');
+            fileList.innerHTML = '';
+            Array.from(e.target.files).filter(f => /\.(tif|tiff|jpg|jpeg|png|bmp)$/i.test(f.name)).forEach((file, index) => {
+                const item = document.createElement('div');
+                item.className = 'file-item';
+                item.innerHTML = `
+                    <span class="file-name">${file.name}</span>
+                    <span class="file-size">${(file.size/1024/1024).toFixed(2)} MB</span>
+                    <button type="button" class="remove-file" onclick="removeFile('ch002_files', ${index})">×</button>
+                `;
+                fileList.appendChild(item);
+            });
+            updateSubmitButton();
+        });
+        
+        function updateSubmitButton() {
+            const ch00Files = document.getElementById('ch00_files').files;
+            const ch002Files = document.getElementById('ch002_files').files;
+            const submitBtn = document.getElementById('submit-btn');
+            
+            const ch00ImageCount = Array.from(ch00Files || []).filter(file => 
+                /\.(tif|tiff|jpg|jpeg|png|bmp)$/i.test(file.name)
+            ).length;
+            const ch002ImageCount = Array.from(ch002Files || []).filter(file => 
+                /\.(tif|tiff|jpg|jpeg|png|bmp)$/i.test(file.name)
+            ).length;
+            const total = ch00ImageCount + ch002ImageCount;
+
+            if (total > 0) {
+                submitBtn.disabled = false;
+                submitBtn.textContent = `📤 Upload ${total} Selected Image${total>1?'s':''}`;
+            } else {
+                submitBtn.disabled = true;
+                submitBtn.textContent = '📤 Upload Selected File(s)';
+            }
+        }
+        
+        // Initialize submit button state
+        updateSubmitButton();
+    </script>
+</body>
+</html>

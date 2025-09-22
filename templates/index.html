@@ -64,6 +64,94 @@
             border-bottom: 1px solid #e9ecef;
         }
 
+        .upload-section {
+            padding: 20px;
+            background: #e3f2fd;
+            border-bottom: 1px solid #bbdefb;
+            text-align: center;
+        }
+
+        .upload-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 15px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .upload-status {
+            text-align: left;
+        }
+
+        .upload-status h4 {
+            margin: 0 0 5px 0;
+            color: #1976d2;
+            font-size: 1.1em;
+        }
+
+        .upload-status p {
+            margin: 0;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .upload-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-upload {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 500;
+            text-decoration: none;
+            display: inline-block;
+            transition: all 0.3s ease;
+        }
+
+        .btn-upload:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
+        }
+
+        .btn-clear {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-clear:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(220, 53, 69, 0.3);
+        }
+
+        .file-count {
+            background: #28a745;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .no-files {
+            background: #6c757d;
+        }
+
         .timepoint-controls {
             margin-bottom: 10px;
             padding: 15px;
@@ -607,7 +695,20 @@
     <div class="container">
         <div class="header">
             <h1>🔬 Cell Image Viewer</h1>
-            <p>Randomly select cell nucleus images and view corresponding nucleus+cytoplasm images</p>
+            <p>Upload folders of cell images and analyze nucleus and cytoplasm whiteness over time</p>
+        </div>
+
+        <div class="upload-section">
+            <div class="upload-info">
+                <div class="upload-status">
+                    <h4>📁 Folder Upload Status</h4>
+                    <p id="upload-status-text">No image folders uploaded yet. Upload folders containing images for both channels to start analysis.</p>
+                </div>
+                <div class="upload-buttons">
+                    <a href="/upload" class="btn-upload">📁 Upload Folders</a>
+                    <button onclick="clearUploads()" class="btn-clear">🗑️ Clear All</button>
+                </div>
+            </div>
         </div>
 
         <div class="controls">
@@ -628,6 +729,7 @@
                         <button class="btn btn-secondary" onclick="setCytoplasmSelectionMode()" id="cytoplasm-mode-btn">
                             🔬 Cytoplasm Selection
                         </button>
+                        <button class="btn btn-secondary" onclick="togglePolygonMode()" id="polygon-mode-btn" title="Click to draw connected lines (freeform polygon)">📐 Polygon</button>
                     </div>
                     <div class="selection-buttons">
                         <button class="btn btn-secondary" onclick="clearSelection()" id="clear-btn" disabled>
@@ -777,6 +879,9 @@
         let nucleusSelection = null;
         let cytoplasmSelection = null;
         let isNucleusSelectionMode = true; // Start with nucleus selection mode
+        let polygonMode = false;
+        let polygonPoints = [];
+        let polygonPreview = null;
         let isTracking = false;
         let trackingEndTimepoint = null;
         
@@ -801,6 +906,39 @@
         function clearSelectionBoxes() {
             document.getElementById('nucleus-overlay').innerHTML = '';
             document.getElementById('cytoplasm-overlay').innerHTML = '';
+        }
+        function togglePolygonMode() {
+            polygonMode = !polygonMode;
+            const btn = document.getElementById('polygon-mode-btn');
+            if (polygonMode) {
+                btn.classList.remove('btn-secondary');
+                btn.classList.add('btn');
+            } else {
+                btn.classList.remove('btn');
+                btn.classList.add('btn-secondary');
+                polygonPoints = [];
+                if (polygonPreview) polygonPreview.remove();
+                polygonPreview = null;
+            }
+        }
+
+        function drawPolygonPreview(type) {
+            const overlay = document.getElementById(type + '-overlay');
+            if (polygonPreview) polygonPreview.remove();
+            const svgNS = 'http://www.w3.org/2000/svg';
+            const svg = document.createElementNS(svgNS, 'svg');
+            svg.setAttribute('class', 'polygon-overlay');
+            svg.setAttribute('width', '100%');
+            svg.setAttribute('height', '100%');
+            const poly = document.createElementNS(svgNS, 'polyline');
+            poly.setAttribute('fill', 'rgba(0,255,0,0.15)');
+            poly.setAttribute('stroke', '#00ff00');
+            poly.setAttribute('stroke-width', '2');
+            const pts = polygonPoints.map(p => `${p.x}% ${p.y}%`).join(' ');
+            poly.setAttribute('points', pts);
+            svg.appendChild(poly);
+            overlay.appendChild(svg);
+            polygonPreview = svg;
         }
 
         function createSelectionBox(x, y, width, height, className = '') {
@@ -915,6 +1053,40 @@ window.onload = function () {
 
             const clickX = ((event.clientX - rect.left) / rect.width) * 100;
             const clickY = ((event.clientY - rect.top) / rect.height) * 100;
+
+            if (polygonMode) {
+                // Polygon drawing: click to add points; double-click to finish
+                if (!polygonPoints.length) {
+                    clearSelectionBoxes();
+                }
+                polygonPoints.push({ x: clickX, y: clickY });
+                drawPolygonPreview(type);
+
+                container.ondblclick = () => {
+                    if (polygonPoints.length >= 3) {
+                        const selectionObj = { points: polygonPoints };
+                        if (isNucleusSelectionMode) {
+                            nucleusSelection = selectionObj;
+                            // Mirror preview to both sides for nucleus
+                            drawPolygonPreview('nucleus');
+                            drawPolygonPreview('cytoplasm');
+                            setCytoplasmSelectionMode();
+                            document.getElementById('stats-text').textContent =
+                                `🧬 Nucleus polygon confirmed. Now draw cytoplasm polygon on the right image.`;
+                            document.getElementById('stats').style.display = 'block';
+                        } else {
+                            cytoplasmSelection = selectionObj;
+                            document.getElementById('measure-btn').disabled = false;
+                            document.getElementById('stats-text').textContent =
+                                `🔬 Cytoplasm polygon confirmed. Click "Measure Whiteness".`;
+                            document.getElementById('stats').style.display = 'block';
+                        }
+                        polygonPoints = [];
+                        container.ondblclick = null;
+                    }
+                };
+                return;
+            }
 
             if (!isSelecting) {
                 clearSelectionBoxes();
@@ -1497,7 +1669,55 @@ window.onload = function () {
         // Load timepoints on page load
         window.onload = function () {
             loadTimepoints();
+            updateUploadStatus();
         };
+
+        // Upload-related functions
+        function updateUploadStatus() {
+            fetch('/api/all-cells')
+                .then(res => res.json())
+                .then(data => {
+                    const statusText = document.getElementById('upload-status-text');
+                    if (data.total_cells > 0) {
+                        statusText.innerHTML = `✅ <strong>${data.total_cells}</strong> image pairs from uploaded folders ready for analysis`;
+                        statusText.style.color = '#28a745';
+                    } else {
+                        statusText.innerHTML = 'No image folders uploaded yet. Upload folders containing images for both channels to start analysis.';
+                        statusText.style.color = '#666';
+                    }
+                })
+                .catch(err => {
+                    console.error('Error updating upload status:', err);
+                    const statusText = document.getElementById('upload-status-text');
+                    statusText.innerHTML = 'Error checking upload status. Please refresh the page.';
+                    statusText.style.color = '#dc3545';
+                });
+        }
+
+        function clearUploads() {
+            if (confirm('Are you sure you want to clear all uploaded image folders? This action cannot be undone.')) {
+                fetch('/clear-uploads', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                .then(res => {
+                    if (res.ok) {
+                        alert('All uploaded image folders have been cleared.');
+                        updateUploadStatus();
+                        // Reload the page to reset the interface
+                        location.reload();
+                    } else {
+                        throw new Error('Failed to clear uploads');
+                    }
+                })
+                .catch(err => {
+                    console.error('Error clearing uploads:', err);
+                    alert('Error clearing uploads: ' + err.message);
+                });
+            }
+        }
     </script>
 </body>
 

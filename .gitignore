@@ -51,3 +51,18 @@ ENV/
 # Temporary files
 *.tmp
 *.temp
+
+# Large data and generated artifacts
+*.tif
+*.tiff
+*.db
+
+# Project data folders
+C0/
+C1/
+ch002/
+ch00 2/
+uploads/
+
+# Generated analysis outputs
+static/*.xlsx
