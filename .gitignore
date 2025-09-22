@@ -52,17 +52,10 @@ ENV/
 *.tmp
 *.temp
 
-# Large data and generated artifacts
+# Imaging data (do not track)
 *.tif
 *.tiff
-*.db
-
-# Project data folders
 C0/
 C1/
-ch002/
-ch00 2/
-uploads/
-
-# Generated analysis outputs
-static/*.xlsx
+uploads/ch00/
+uploads/ch002/
