@@ -587,30 +587,33 @@
             background: rgba(52, 152, 219, 0.1);
         }
 
-        .cell-image {
-            max-width: 100%;
-            height: auto;
-            display: block;
-            user-select: none;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-        }
-
         .timepoint-info {
             margin-top: 10px;
             font-size: 0.9em;
             color: #666;
         }
 
-        .cell-image {
-            max-width: 100%;
-            max-height: 400px;
-            object-fit: contain;
-            border-radius: 10px;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        .image-container {
+            position: relative;
+            text-align: center;
         }
+
+        .cell-image {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .cell-overlay {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+
+
 
         .image-info {
             padding: 20px;
@@ -782,110 +785,103 @@
             </div>
 
             <div id="image-display" style="display: none;">
-                <div class="image-grid-wrapper">
-                    <div class="image-grid">
-                        <div class="image-card">
-                            <div class="image-header">
-                                <h3>🧬 Nucleus Only</h3>
-                                <p id="nucleus-info">Channel ch00</fp>
-                            </div>
-                            <div class="image-container" id="nucleus-container"
-                                onmousemove="handleMouseMove(event, 'nucleus')" onmouseleave="handleMouseLeave()">
-                                <img id="nucleus-image" class="cell-image" alt="Nucleus Image"
-                                    onclick="startSelection(event, 'nucleus')">
-                                <div class="cell-overlay" id="nucleus-overlay"></div>
-                            </div>
-                            <div class="image-info">
-                                <div class="info-grid">
-                                    <div class="info-item">
-                                        <div class="info-label">File</div>
-                                        <div class="info-value" id="nucleus-timepoint">-</div>
-                                    </div>
-                                    <div class="info-item">
-                                        <div class="info-label">Location</div>
-                                        <div class="info-value" id="nucleus-location">-</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+            <div class="image-grid-wrapper">
+                <div class="image-grid">
 
-                        <div class="image-card">
-                            <div class="image-header">
-                                <h3>🔬 Nucleus + Cytoplasm</h3>
-                                <p id="cytoplasm-info">Channel ch002</p>
-                            </div>
-                            <div class="image-container" id="cytoplasm-container"
-                                onmousedown="startSelection(event, 'cytoplasm')"
-                                onmousemove="handleMouseMove(event, 'cytoplasm')">
-                                <img id="cytoplasm-image" class="cell-image" alt="Nucleus + Cytoplasm Image">
-                                <div class="cell-overlay" id="cytoplasm-overlay"></div>
-                            </div>
-                            <div class="image-info">
-                                <div class="info-grid">
-                                    <div class="info-item">
-                                        <div class="info-label">File</div>
-                                        <div class="info-value" id="cytoplasm-timepoint">-</div>
-                                    </div>
-                                    <div class="info-item">
-                                        <div class="info-label">Location</div>
-                                        <div class="info-value" id="cytoplasm-location">-</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                    <!-- Nucleus -->
+        <div class="image-card">
+            <div class="image-header">
+                <h3>🧬 Nucleus Only</h3>
+                <p id="nucleus-info">Channel ch00</p>
+            </div>
+            <div class="image-container" id="nucleus-container">
+                <img id="nucleus-image" class="cell-image" alt="Nucleus Image"
+                    onclick="handleImageClick(event, 'nucleus')">
+                <div class="cell-overlay" id="nucleus-overlay"></div>
+            </div>
+            <div class="image-info">
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">File</div>
+                        <div class="info-value" id="nucleus-timepoint">-</div>
                     </div>
-
-                    <!-- Edge navigation buttons -->
-                    <button class="edge-nav-btn edge-nav-left" onclick="previousTimepoint()" id="edge-prev-btn"
-                        disabled>
-                        ⬅️
-                    </button>
-                    <button class="edge-nav-btn edge-nav-right" onclick="nextTimepoint()" id="edge-next-btn" disabled>
-                        ➡️
-                    </button>
-                </div>
-
-                <!-- Whiteness Results Display -->
-                <div id="whiteness-results" class="whiteness-results" style="display: none;">
-                    <h3>📊 Whiteness Analysis Results</h3>
-                    <div class="results-grid">
-                        <div class="result-section">
-                            <h4>🧬 Nucleus Selection Results</h4>
-                            <div id="nucleus-results" class="result-content">
-                                <p>No nucleus selection made yet.</p>
-                            </div>
-                        </div>
-                        <div class="result-section">
-                            <h4>🔬 Cytoplasm Selection Results</h4>
-                            <div id="cytoplasm-results" class="result-content">
-                                <p>No cytoplasm selection made yet.</p>
-                            </div>
-                        </div>
+                    <div class="info-item">
+                        <div class="info-label">Location</div>
+                        <div class="info-value" id="nucleus-location">-</div>
                     </div>
                 </div>
             </div>
         </div>
+
+        <!-- Cytoplasm -->
+        <div class="image-card">
+            <div class="image-header">
+                <h3>🔬 Nucleus + Cytoplasm</h3>
+                <p id="cytoplasm-info">Channel ch002</p>
+            </div>
+            <div class="image-container" id="cytoplasm-container">
+                <img id="cytoplasm-image" class="cell-image" alt="Cytoplasm Image"
+                    onclick="handleImageClick(event, 'cytoplasm')">
+                <div class="cell-overlay" id="cytoplasm-overlay"></div>
+            </div>
+            <div class="image-info">
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">File</div>
+                        <div class="info-value" id="cytoplasm-timepoint">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Location</div>
+                        <div class="info-value" id="cytoplasm-location">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edge navigation buttons -->
+        <button class="edge-nav-btn edge-nav-left" onclick="previousTimepoint()" id="edge-prev-btn" disabled>
+            ⬅️
+        </button>
+        <button class="edge-nav-btn edge-nav-right" onclick="nextTimepoint()" id="edge-next-btn" disabled>
+            ➡️
+        </button>
     </div>
 
+    <!-- Whiteness Results Display -->
+    <div id="whiteness-results" class="whiteness-results" style="display: none;">
+        <h3>📊 Whiteness Analysis Results</h3>
+        <div class="results-grid">
+            <div class="result-section">
+                <h4>🧬 Nucleus Selection Results</h4>
+                <div id="nucleus-results" class="result-content">
+                    <p>No nucleus selection made yet.</p>
+                </div>
+            </div>
+            <div class="result-section">
+                <h4>🔬 Cytoplasm Selection Results</h4>
+                <div id="cytoplasm-results" class="result-content">
+                    <p>No cytoplasm selection made yet.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
-    <script >
+
+
+    <script>
         let trackingResults = [];
         let currentTimepoint = null;
         let allTimepoints = [];
-        let isSelecting = false;
-        let selectionStartPoint = null;
-        let currentSelection = null;
-        let confirmedSelection = null;
-        let nucleusSelection = null;
-        let cytoplasmSelection = null;
-        let isNucleusSelectionMode = true; // Start with nucleus selection mode
-        let polygonMode = false;
-        let polygonPoints = [];
-        let polygonPreview = null;
+        let confirmedContour = null; // thay vì confirmedMask
+ // mask từ backend sau khi click chọn nhân
+        let isNucleusSelectionMode = true; // giữ để phân biệt nucleus / cytoplasm (nếu mở rộng sau)
         let isTracking = false;
         let trackingEndTimepoint = null;
-        
+        let currentFilename = null;  // giữ filename thật từ backend
 
+
+        // =================== UI HELPERS ===================
         function showLoading() {
             document.getElementById('loading').style.display = 'block';
             document.getElementById('error').style.display = 'none';
@@ -903,712 +899,289 @@
             hideLoading();
         }
 
+        function clearSelection() {
+            confirmedContour = null;
+            clearSelectionBoxes();
+            document.getElementById('confirm-btn').disabled = true;
+            document.getElementById('measure-btn').disabled = true;
+            document.getElementById('tracking-controls').style.display = 'none';
+            document.getElementById('stats').style.display = 'none';
+            document.getElementById('whiteness-results').style.display = 'none';
+            console.log("🔄 Cleared selection & mask");
+        }
+
         function clearSelectionBoxes() {
             document.getElementById('nucleus-overlay').innerHTML = '';
             document.getElementById('cytoplasm-overlay').innerHTML = '';
         }
-        function togglePolygonMode() {
-            polygonMode = !polygonMode;
-            const btn = document.getElementById('polygon-mode-btn');
-            if (polygonMode) {
-                btn.classList.remove('btn-secondary');
-                btn.classList.add('btn');
-            } else {
-                btn.classList.remove('btn');
-                btn.classList.add('btn-secondary');
-                polygonPoints = [];
-                if (polygonPreview) polygonPreview.remove();
-                polygonPreview = null;
+
+        // =================== EXPORT ===================
+        function exportToExcel() {
+            if (typeof XLSX === 'undefined') {
+                alert('❌ Excel export library not loaded.');
+                return;
+            }
+
+            if (trackingResults.length === 0) {
+                alert('⚠️ No tracking results to export.');
+                return;
+            }
+
+            try {
+                let header = ["File", "Nucleus Whiteness (ch00)", "Nucleus + Cytoplasm Whiteness (ch002)"];
+                let rows = trackingResults.map(r => [
+                    r.timepoint + 1,
+                    r.nucleus_whiteness,
+                    r.cytoplasm_whiteness
+                ]);
+
+                let ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+                let wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Whiteness Data");
+
+                const now = new Date();
+                const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                const filename = `whiteness_results_${timestamp}.xlsx`;
+
+                XLSX.writeFile(wb, filename);
+                alert(`✅ Excel exported: "${filename}"`);
+            } catch (error) {
+                console.error('Excel export error:', error);
+                alert('❌ Error exporting to Excel: ' + error.message);
             }
         }
 
-        function drawPolygonPreview(type) {
-            const overlay = document.getElementById(type + '-overlay');
-            if (polygonPreview) polygonPreview.remove();
-            const svgNS = 'http://www.w3.org/2000/svg';
-            const svg = document.createElementNS(svgNS, 'svg');
-            svg.setAttribute('class', 'polygon-overlay');
-            svg.setAttribute('width', '100%');
-            svg.setAttribute('height', '100%');
-            const poly = document.createElementNS(svgNS, 'polyline');
-            poly.setAttribute('fill', 'rgba(0,255,0,0.15)');
-            poly.setAttribute('stroke', '#00ff00');
-            poly.setAttribute('stroke-width', '2');
-            const pts = polygonPoints.map(p => `${p.x}% ${p.y}%`).join(' ');
-            poly.setAttribute('points', pts);
+        // =================== MASK HANDLING ===================
+        function selectNucleusFromClick(event) {
+            const img = document.getElementById("nucleus-image");
+            const rect = img.getBoundingClientRect();
+            const click_x = Math.round((event.clientX - rect.left) * (img.naturalWidth / rect.width));
+            const click_y = Math.round((event.clientY - rect.top) * (img.naturalHeight / rect.height));
+
+            if (!currentFilename) {
+                alert("❌ No filename loaded.");
+                return;
+            }
+
+            fetch("/api/select-nucleus", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    image_filename: currentFilename,
+                    click_x,
+                    click_y,
+                    channel: "ch00"
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) {
+                    alert("❌ " + data.error);
+                } else {
+                    console.log("✅ Centroid:", data.centroid, "Area:", data.area);
+
+                    // 👉 hiển thị mask overlay tại đây
+                    // 👉 hiển thị contour overlay
+                    if (data.contour) {
+                        showContourOverlay("nucleus", data.contour);
+                    }
+
+                }
+            })
+            .catch(err => {
+                console.error("❌ Network/Fetch error:", err);
+            });
+        }
+
+
+        function confirmSelection() {
+           if (!confirmedContour) {
+            alert("⚠️ No contour to confirm.");
+            return;
+        }
+
+        showContourOverlay('cytoplasm', confirmedContour);
+
+        document.getElementById('measure-btn').disabled = false;
+        document.getElementById('stats-text').textContent = "🧬 Contour confirmed. Ready to measure whiteness.";
+        document.getElementById('stats').style.display = 'block';
+
+        console.log("✅ Contour confirmed & applied to both images");
+
+        }
+       
+        
+
+
+        // =================== MEASUREMENT ===================
+        function measureBothWhiteness(isTrackingMode = false) {
+            const nucleusImgPath = document.getElementById('nucleus-image').src;
+            const cytoplasmImgPath = document.getElementById('cytoplasm-image').src;
+
+            if (!confirmedContour) {
+                alert("⚠️ No contour selected. Please select and confirm a contour first.");
+                return;
+            }
+
+            fetch('/api/measure-both-whiteness', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    nucleusPath: nucleusImgPath,
+                    cytoplasmPath: cytoplasmImgPath,
+                    contour: confirmedContour
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.nucleus_whiteness !== undefined) {
+                    if (isTrackingMode) {
+                        trackingResults.push({
+                            timepoint: currentTimepoint,
+                            nucleus_whiteness: data.nucleus_whiteness,
+                            cytoplasm_whiteness: data.cytoplasm_whiteness
+                        });
+
+                        console.log(`📊 File ${currentTimepoint + 1}:`, data);
+
+                        if (currentTimepoint < trackingEndTimepoint) {
+                            currentTimepoint++;
+                            document.getElementById('timepoint-select').value = currentTimepoint;
+                            loadTimepoint();
+                        } else {
+                            isTracking = false;
+                            console.log("✅ Tracking complete", trackingResults);
+                            exportToExcel();
+                        }
+                    } else {
+                        displayWhitenessResults(data);
+                    }
+                }
+            })
+            .catch(err => console.error("Error measuring both whiteness:", err));
+        }
+        function showContourOverlay(type, contour) {
+    const overlay = document.getElementById(type + "-overlay");
+    overlay.innerHTML = "";
+
+    const img = document.getElementById(type + "-image");
+
+    if (img.complete && img.naturalWidth !== 0) {
+        drawSVGOverlay(img, overlay, contour);
+    } else {
+        img.onload = () => drawSVGOverlay(img, overlay, contour);
+    }
+
+    confirmedContour = contour;
+    document.getElementById("confirm-btn").disabled = false;
+}
+
+        function drawSVGOverlay(img, overlay, contour) {
+            overlay.innerHTML = ""; // Xóa overlay cũ
+
+            const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            svg.setAttribute("width", "100%");
+            svg.setAttribute("height", "100%");
+            svg.setAttribute("viewBox", `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
+            svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+            // Dùng polygon để viền kín
+            const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+            poly.setAttribute("points", contour.map(pt => pt.join(",")).join(" "));
+            poly.setAttribute("fill", "rgba(0,255,0,0.1)"); // Màu nền trong suốt nhẹ
+            poly.setAttribute("stroke", "lime");           // Màu viền
+            poly.setAttribute("stroke-width", "2");
+
             svg.appendChild(poly);
             overlay.appendChild(svg);
-            polygonPreview = svg;
+
+            // Lưu contour đã confirm
+            confirmedContour = contour;
+            document.getElementById("confirm-btn").disabled = false;
         }
+        function selectCytoplasmFromClick(event) {
+            const img = document.getElementById("cytoplasm-image");
+            const rect = img.getBoundingClientRect();
+            const click_x = Math.round((event.clientX - rect.left) * (img.naturalWidth / rect.width));
+            const click_y = Math.round((event.clientY - rect.top) * (img.naturalHeight / rect.height));
 
-        function createSelectionBox(x, y, width, height, className = '') {
-            const box = document.createElement('div');
-            box.className = 'selection-box ' + className;
-            box.style.left = x + '%';
-            box.style.top = y + '%';
-            box.style.width = width + '%';
-            box.style.height = height + '%';
-            return box;
-        }
-
-        let previewBox = null;
-
-        function exportToExcel() {
-    // Check if XLSX is available
-    if (typeof XLSX === 'undefined') {
-        alert('❌ Excel export library not loaded. Please refresh the page and try again.');
-        return;
-    }
-
-    if (trackingResults.length === 0) {
-        alert('⚠️ No tracking results to export. Please run auto-tracking first.');
-        return;
-    }
-window.onload = function () {
-    loadTimepoints();
-    
-    // Check if XLSX loaded properly
-    if (typeof XLSX === 'undefined') {
-        console.warn('XLSX library failed to load - Excel export will not work');
-    } else {
-        console.log('XLSX library loaded successfully');
-    }
-};
-    try {
-        let header = ["File", "Nucleus Whiteness (ch00)", "Nucleus + Cytoplasm Whiteness (ch002)"];
-        let rows = trackingResults.map(r => [
-            r.timepoint + 1,         // file number
-            r.nucleus_whiteness,     // ch00
-            r.cytoplasm_whiteness    // ch002
-        ]);
-
-        let ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
-        let wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Whiteness Data");
-        
-        // Generate filename with timestamp
-        const now = new Date();
-        const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, -5);
-        const filename = `whiteness_results_${timestamp}.xlsx`;
-        
-        XLSX.writeFile(wb, filename);
-        
-        alert(`✅ Excel file exported successfully as "${filename}"`);
-    } catch (error) {
-        console.error('Excel export error:', error);
-        alert('❌ Error exporting to Excel: ' + error.message);
-    }
-}
-
-        function handleMouseMove(event, type) {
-            if (!isSelecting || !previewBox) return;
-
-            // Always base coordinates on the container
-            const container = document.getElementById(type + '-container');
-            const rect = container.getBoundingClientRect();
-
-            const moveX = ((event.clientX - rect.left) / rect.width) * 100;
-            const moveY = ((event.clientY - rect.top) / rect.height) * 100;
-
-            const x = Math.min(selectionStartPoint.x, moveX);
-            const y = Math.min(selectionStartPoint.y, moveY);
-            const width = Math.abs(moveX - selectionStartPoint.x);
-            const height = Math.abs(moveY - selectionStartPoint.y);
-
-            previewBox.nucleusBox.style.left = `${x}%`;
-            previewBox.nucleusBox.style.top = `${y}%`;
-            previewBox.nucleusBox.style.width = `${width}%`;
-            previewBox.nucleusBox.style.height = `${height}%`;
-
-            previewBox.cytoplasmBox.style.left = `${x}%`;
-            previewBox.cytoplasmBox.style.top = `${y}%`;
-            previewBox.cytoplasmBox.style.width = `${width}%`;
-            previewBox.cytoplasmBox.style.height = `${height}%`;
-        }
-
-
-        function handleMouseLeave() {
-            if (previewBox) {
-                previewBox.style.opacity = 0.5; // visually dim when mouse leaves
-            }
-        }
-
-
-        function startSelection(event, type) {
-            if (isTracking) return;
-
-            // Check if we're in the right selection mode
-            if (isNucleusSelectionMode && type !== 'nucleus') {
-                alert('Please select nucleus on the left image first.');
-                return;
-            }
-            if (!isNucleusSelectionMode && type !== 'cytoplasm') {
-                alert('Please select cytoplasm on the right image.');
+            if (!currentFilename) {
+                alert("❌ No filename loaded.");
                 return;
             }
 
-            // Always get container's bounding box
-            const container = document.getElementById(type + '-container');
-            const rect = container.getBoundingClientRect();
-
-            const clickX = ((event.clientX - rect.left) / rect.width) * 100;
-            const clickY = ((event.clientY - rect.top) / rect.height) * 100;
-
-            if (polygonMode) {
-                // Polygon drawing: click to add points; double-click to finish
-                if (!polygonPoints.length) {
-                    clearSelectionBoxes();
-                }
-                polygonPoints.push({ x: clickX, y: clickY });
-                drawPolygonPreview(type);
-
-                container.ondblclick = () => {
-                    if (polygonPoints.length >= 3) {
-                        const selectionObj = { points: polygonPoints };
-                        if (isNucleusSelectionMode) {
-                            nucleusSelection = selectionObj;
-                            // Mirror preview to both sides for nucleus
-                            drawPolygonPreview('nucleus');
-                            drawPolygonPreview('cytoplasm');
-                            setCytoplasmSelectionMode();
-                            document.getElementById('stats-text').textContent =
-                                `🧬 Nucleus polygon confirmed. Now draw cytoplasm polygon on the right image.`;
-                            document.getElementById('stats').style.display = 'block';
-                        } else {
-                            cytoplasmSelection = selectionObj;
-                            document.getElementById('measure-btn').disabled = false;
-                            document.getElementById('stats-text').textContent =
-                                `🔬 Cytoplasm polygon confirmed. Click "Measure Whiteness".`;
-                            document.getElementById('stats').style.display = 'block';
-                        }
-                        polygonPoints = [];
-                        container.ondblclick = null;
-                    }
-                };
-                return;
-            }
-
-            if (!isSelecting) {
-                clearSelectionBoxes();
-                isSelecting = true;
-                selectionStartPoint = { x: clickX, y: clickY };
-
-                currentSelection = null;
-
-                if (isNucleusSelectionMode) {
-                    // For nucleus selection, create boxes on both images
-                    const nucleusBox = createSelectionBox(clickX, clickY, 0.1, 0.1, 'preview');
-                    const cytoplasmBox = createSelectionBox(clickX, clickY, 0.1, 0.1, 'preview');
-
-                    document.getElementById('nucleus-overlay').appendChild(nucleusBox);
-                    document.getElementById('cytoplasm-overlay').appendChild(cytoplasmBox);
-
-                    previewBox = { nucleusBox, cytoplasmBox };
+            fetch("/api/select-cytoplasm", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    image_filename: currentFilename,
+                    click_x,
+                    click_y
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) {
+                    alert("❌ " + data.error);
                 } else {
-                    // For cytoplasm selection, create box only on right image
-                    const cytoplasmBox = createSelectionBox(clickX, clickY, 0.1, 0.1, 'preview');
-                    document.getElementById('cytoplasm-overlay').appendChild(cytoplasmBox);
-                    previewBox = { cytoplasmBox };
+                    console.log("✅ Cytoplasm contour:", data.cytoplasm_contour);
+                    showContourOverlay("cytoplasm", data.cytoplasm_contour);
                 }
+            })
+            .catch(err => console.error("❌ Cytoplasm selection error:", err));
+        }
 
-                console.log('Selection started at:', selectionStartPoint);
-            } else {
-                isSelecting = false;
-
-                const x = Math.min(selectionStartPoint.x, clickX);
-                const y = Math.min(selectionStartPoint.y, clickY);
-                const width = Math.abs(clickX - selectionStartPoint.x);
-                const height = Math.abs(clickY - selectionStartPoint.y);
-
-                if (isNucleusSelectionMode) {
-                    // Update both boxes for nucleus selection
-                    previewBox.nucleusBox.style.left = `${x}%`;
-                    previewBox.nucleusBox.style.top = `${y}%`;
-                    previewBox.nucleusBox.style.width = `${width}%`;
-                    previewBox.nucleusBox.style.height = `${height}%`;
-                    previewBox.nucleusBox.classList.remove('preview');
-
-                    previewBox.cytoplasmBox.style.left = `${x}%`;
-                    previewBox.cytoplasmBox.style.top = `${y}%`;
-                    previewBox.cytoplasmBox.style.width = `${width}%`;
-                    previewBox.cytoplasmBox.style.height = `${height}%`;
-                    previewBox.cytoplasmBox.classList.remove('preview');
-                } else {
-                    // Update only cytoplasm box
-                    previewBox.cytoplasmBox.style.left = `${x}%`;
-                    previewBox.cytoplasmBox.style.top = `${y}%`;
-                    previewBox.cytoplasmBox.style.width = `${width}%`;
-                    previewBox.cytoplasmBox.style.height = `${height}%`;
-                    previewBox.cytoplasmBox.classList.remove('preview');
-                }
-
-                currentSelection = { x, y, width, height };
-
-                document.getElementById('confirm-btn').disabled = false;
-                document.getElementById('clear-btn').disabled = false;
-
-                console.log('Selection finalized:', currentSelection);
-
-                previewBox = null;
-                selectionStartPoint = null;
+        function handleImageClick(event, channel) {
+            if (isNucleusSelectionMode && channel === 'nucleus') {
+                selectNucleusFromClick(event);
+            } else if (!isNucleusSelectionMode && channel === 'cytoplasm') {
+                selectCytoplasmFromClick(event);
             }
         }
 
-        function measureBothWhiteness(isTrackingMode = false) {
-    const nucleusImgPath = document.getElementById('nucleus-image').src;
-    const cytoplasmImgPath = document.getElementById('cytoplasm-image').src;
-
-    const selectionData = confirmedSelection || currentSelection;
-
-    fetch('/api/measure-both-whiteness', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            nucleusPath: nucleusImgPath,
-            cytoplasmPath: cytoplasmImgPath,
-            selection: selectionData
-        })
-    })
-        .then(res => res.json())
-        .then(data => {
-            if (data.nucleus_whiteness !== undefined) {
-                if (isTrackingMode) {
-                    trackingResults.push({
-                        timepoint: currentTimepoint,
-                        nucleus_whiteness: data.nucleus_whiteness,
-                        cytoplasm_whiteness: data.cytoplasm_whiteness
-                    });
-
-                    console.log(`📊 Tracking result for file ${currentTimepoint + 1}:`, data);
-
-                    // Step to next file if we haven't reached the end
-                    if (currentTimepoint < trackingEndTimepoint) {
-                        currentTimepoint++;
-                        document.getElementById('timepoint-select').value = currentTimepoint;
-                        loadTimepoint();
-                    } else {
-                        isTracking = false;
-                        console.log("✅ Tracking complete", trackingResults);
-
-                        // ---- CSV Export ----
-                        let csvContent = "data:text/tab-separated-values;charset=utf-8,"
-    + "File\tNucleus Whiteness (ch00)\tNucleus + Cytoplasm Whiteness (ch002)\n"
-    + trackingResults.map(r =>
-        `${r.timepoint + 1}\t${r.nucleus_whiteness}\t${r.cytoplasm_whiteness}`
-    ).join("\n");
-
-                        let encodedUri = encodeURI(csvContent);
-                        let link = document.createElement("a");
-                        link.setAttribute("href", encodedUri);
-                        link.setAttribute(
-                            "download",
-                            `whiteness_results_file${trackingResults[0].timepoint + 1}_to_${trackingResults[trackingResults.length - 1].timepoint + 1}.csv`
-                        );
-                        document.body.appendChild(link);
-                        link.click();
-                        document.body.removeChild(link);
-
-                        // Alert for quick view
-                        let resultText = trackingResults.map(r =>
-                            `File ${r.timepoint + 1} → Nucleus: ${r.nucleus_whiteness.toFixed(2)}, Cytoplasm: ${r.cytoplasm_whiteness.toFixed(2)}`
-                        ).join("\n");
-                        alert("✅ Auto-tracking complete!\n\n" + resultText);
-                    }
-                }
-            }
-        })
-        .catch(err => console.error("Error measuring both whiteness:", err));
-}
 
 
 
+        // =================== TRACKING ===================
         function startTracking() {
             const endFileNumber = parseInt(document.getElementById('end-timepoint').value);
-            const currentFileNumber = currentTimepoint + 1; // display is 1-based
+            const currentFileNumber = currentTimepoint + 1;
 
             if (!endFileNumber || endFileNumber <= currentFileNumber) {
-                alert('Please enter a valid end file number greater than the current file number.');
+                alert('❌ Invalid end file number.');
                 return;
             }
 
-            trackingEndTimepoint = endFileNumber - 1; // convert to zero-based index
+            trackingEndTimepoint = endFileNumber - 1;
             isTracking = true;
-            trackingResults = []; // reset
+            trackingResults = [];
 
             document.getElementById('timepoint-info').textContent =
-                `🎯 Auto-tracking active: File ${currentFileNumber} to ${endFileNumber}.`;
+                `🎯 Auto-tracking: File ${currentFileNumber} → ${endFileNumber}`;
+            console.log(`▶️ Auto-tracking started`);
 
-            console.log(`Auto-tracking from file ${currentFileNumber} to ${endFileNumber}`);
-
-            // Start by measuring current file
             measureBothWhiteness(true);
         }
 
-
-
-
-
-
-        function updateSelectionControls() {
-            const hasSelection = currentSelection !== null;
-            document.getElementById('clear-btn').disabled = !hasSelection;
-            document.getElementById('confirm-btn').disabled = !hasSelection;
-        }
-
-        function updateNavigationButtons() {
-            const currentIndex = allTimepoints.indexOf(currentTimepoint);
-
-            // Update edge navigation buttons
-            document.getElementById('edge-prev-btn').disabled = currentIndex <= 0;
-            document.getElementById('edge-next-btn').disabled = currentIndex >= allTimepoints.length - 1;
-        }
-
+        // =================== IMAGE DISPLAY ===================
         function displayAlignedImages(nucleusPath, cytoplasmPath, timepoint) {
-            // Always clear before drawing new boxes
             clearSelectionBoxes();
 
-            // If we have a confirmed selection, re-add it
-            if (confirmedSelection) {
-                const nucleusBox = createSelectionBox(
-                    confirmedSelection.x,
-                    confirmedSelection.y,
-                    confirmedSelection.width,
-                    confirmedSelection.height,
-                    isTracking ? 'tracking' : 'confirmed'
-                );
-                const cytoplasmBox = createSelectionBox(
-                    confirmedSelection.x,
-                    confirmedSelection.y,
-                    confirmedSelection.width,
-                    confirmedSelection.height,
-                    isTracking ? 'tracking' : 'confirmed'
-                );
-
-                document.getElementById('nucleus-overlay').appendChild(nucleusBox);
-                document.getElementById('cytoplasm-overlay').appendChild(cytoplasmBox);
-            }
-
-            // Load images
             document.getElementById('nucleus-image').src = nucleusPath;
             document.getElementById('cytoplasm-image').src = cytoplasmPath;
 
-            // Update labels
             document.getElementById('nucleus-timepoint').textContent = `File ${timepoint + 1}`;
             document.getElementById('cytoplasm-timepoint').textContent = `File ${timepoint + 1}`;
 
             document.getElementById('image-display').style.display = 'block';
             hideLoading();
 
-            // Auto measure whiteness during tracking
-            if (isTracking && confirmedSelection) {
+            if (isTracking && confirmedContour) {
                 measureBothWhiteness(true);
             }
         }
 
-
-
-        function clearSelection() {
-            currentSelection = null;
-            confirmedSelection = null;
-            nucleusSelection = null;
-            cytoplasmSelection = null;
-            isSelecting = false;
-            selectionStartPoint = null;
-            clearSelectionBoxes();
-
-            // Remove selecting class from containers
-            document.getElementById('nucleus-container').classList.remove('selecting');
-            document.getElementById('cytoplasm-container').classList.remove('selecting');
-
-            // Disable buttons
-            document.getElementById('confirm-btn').disabled = true;
-            document.getElementById('clear-btn').disabled = true;
-            document.getElementById('measure-btn').disabled = true;
-
-            // Hide tracking controls and results
-            document.getElementById('tracking-controls').style.display = 'none';
-            document.getElementById('stats').style.display = 'none';
-            document.getElementById('whiteness-results').style.display = 'none';
-
-            // Reset to nucleus selection mode
-            setNucleusSelectionMode();
-
-            console.log('All selections cleared');
-        }
-
-        function setNucleusSelectionMode() {
-            isNucleusSelectionMode = true;
-            document.getElementById('nucleus-mode-btn').classList.remove('btn-secondary');
-            document.getElementById('nucleus-mode-btn').classList.add('btn');
-            document.getElementById('cytoplasm-mode-btn').classList.remove('btn');
-            document.getElementById('cytoplasm-mode-btn').classList.add('btn-secondary');
-            
-            // Clear any existing selections
-            clearSelection();
-            
-            console.log('Switched to nucleus selection mode');
-        }
-
-        function setCytoplasmSelectionMode() {
-            isNucleusSelectionMode = false;
-            document.getElementById('cytoplasm-mode-btn').classList.remove('btn-secondary');
-            document.getElementById('cytoplasm-mode-btn').classList.add('btn');
-            document.getElementById('nucleus-mode-btn').classList.remove('btn');
-            document.getElementById('nucleus-mode-btn').classList.add('btn-secondary');
-            
-            console.log('Switched to cytoplasm selection mode');
-        }
-
-        function confirmSelection() {
-            if (currentSelection) {
-                if (isNucleusSelectionMode) {
-                    // Store nucleus selection and apply to both images
-                    nucleusSelection = currentSelection;
-                    console.log('Nucleus selection confirmed:', nucleusSelection);
-                    
-                    // Apply nucleus selection to both images
-                    clearSelectionBoxes();
-                    const nucleusBox = createSelectionBox(
-                        nucleusSelection.x, nucleusSelection.y, 
-                        nucleusSelection.width, nucleusSelection.height, 'nucleus-selection'
-                    );
-                    document.getElementById('nucleus-overlay').appendChild(nucleusBox);
-                    
-                    const cytoplasmBox = createSelectionBox(
-                        nucleusSelection.x, nucleusSelection.y, 
-                        nucleusSelection.width, nucleusSelection.height, 'nucleus-selection'
-                    );
-                    document.getElementById('cytoplasm-overlay').appendChild(cytoplasmBox);
-                    
-                    // Switch to cytoplasm selection mode
-                    setCytoplasmSelectionMode();
-                    
-                    // Show message
-                    document.getElementById('stats-text').textContent = 
-                        `🧬 Nucleus selection confirmed. Now select cytoplasm area on the right image.`;
-                    document.getElementById('stats').style.display = 'block';
-                    
-                } else {
-                    // Store cytoplasm selection
-                    cytoplasmSelection = currentSelection;
-                    console.log('Cytoplasm selection confirmed:', cytoplasmSelection);
-                    
-                    // Apply cytoplasm selection to right image only
-                    const cytoplasmBox = createSelectionBox(
-                        cytoplasmSelection.x, cytoplasmSelection.y, 
-                        cytoplasmSelection.width, cytoplasmSelection.height, 'cytoplasm-selection'
-                    );
-                    document.getElementById('cytoplasm-overlay').appendChild(cytoplasmBox);
-                    
-                    // Enable measure button
-                    document.getElementById('measure-btn').disabled = false;
-                    
-                    // Show message
-                    document.getElementById('stats-text').textContent = 
-                        `🔬 Cytoplasm selection confirmed. Click "Measure Whiteness" to analyze both selections.`;
-                    document.getElementById('stats').style.display = 'block';
-                }
-                
-                // Reset current selection
-                currentSelection = null;
-                document.getElementById('confirm-btn').disabled = true;
-                
-            } else {
-                console.log('No selection to confirm');
-            }
-        }
-
-        function measureWhiteness() {
-            if (!nucleusSelection || !cytoplasmSelection) {
-                alert('Please complete both nucleus and cytoplasm selections first.');
-                return;
-            }
-
-            // Get image paths
-            const nucleusImgPath = document.getElementById('nucleus-image').src;
-            const cytoplasmImgPath = document.getElementById('cytoplasm-image').src;
-
-            // Extract relative paths
-            const relativeNucleus = nucleusImgPath.replace(window.location.origin + '/', '');
-            const relativeCytoplasm = cytoplasmImgPath.replace(window.location.origin + '/', '');
-
-            // Send both selections to backend
-            fetch('/api/measure-both-whiteness', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    nucleusPath: relativeNucleus,
-                    cytoplasmPath: relativeCytoplasm,
-                    nucleusSelection: nucleusSelection,
-                    cytoplasmSelection: cytoplasmSelection
-                })
-            })
-            .then(res => res.json())
-            .then(data => {
-                // Display results
-                displayWhitenessResults(data);
-                
-                // Show tracking controls if both selections are complete
-                document.getElementById('tracking-controls').style.display = 'flex';
-                document.getElementById('start-timepoint').value = currentTimepoint;
-                document.getElementById('end-timepoint').value = currentTimepoint + 10;
-            })
-            .catch(err => {
-                console.error("Error measuring whiteness:", err);
-                alert("Error measuring whiteness: " + err.message);
-            });
-        }
-
-        function startAutoTracking() {
-            const startTimepoint = parseInt(document.getElementById('start-timepoint').value);
-            const endTimepoint = parseInt(document.getElementById('end-timepoint').value);
-
-            if (!nucleusSelection || !cytoplasmSelection) {
-                alert('Please complete both nucleus and cytoplasm selections first.');
-                return;
-            }
-
-            if (!startTimepoint || !endTimepoint || startTimepoint >= endTimepoint) {
-                alert('Please enter valid start and end file numbers.');
-                return;
-            }
-
-            // Show progress bar
-            document.getElementById('tracking-progress').style.display = 'block';
-            document.getElementById('auto-track-btn').disabled = true;
-            document.getElementById('tracking-status').textContent = 'Starting auto-tracking...';
-
-            // Send tracking request to backend
-            fetch('/api/auto-track', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    startTimepoint: startTimepoint,
-                    endTimepoint: endTimepoint,
-                    nucleusSelection: nucleusSelection,
-                    cytoplasmSelection: cytoplasmSelection
-                })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    // Update progress
-                    document.getElementById('progress-fill').style.width = '100%';
-                    document.getElementById('tracking-status').textContent = data.message;
-                    
-                    // Show results
-                    displayTrackingResults(data.results);
-                    
-                    // Provide download link
-                    if (data.download_url) {
-                        const downloadLink = document.createElement('a');
-                        downloadLink.href = data.download_url;
-                        downloadLink.download = data.excel_file;
-                        downloadLink.textContent = '📥 Download Excel File';
-                        downloadLink.className = 'btn btn-success';
-                        downloadLink.style.marginTop = '10px';
-                        
-                        document.getElementById('tracking-progress').appendChild(downloadLink);
-                    }
-                    
-                    alert(`✅ Auto-tracking complete!\n\nProcessed ${data.results.length} timepoints.\nExcel file: ${data.excel_file}`);
-                } else {
-                    throw new Error(data.error || 'Unknown error occurred');
-                }
-            })
-            .catch(err => {
-                console.error("Error during auto-tracking:", err);
-                document.getElementById('tracking-status').textContent = 'Error: ' + err.message;
-                alert("Error during auto-tracking: " + err.message);
-            })
-            .finally(() => {
-                document.getElementById('auto-track-btn').disabled = false;
-            });
-        }
-
-        function displayTrackingResults(results) {
-            const resultsDiv = document.getElementById('whiteness-results');
-            const nucleusResultsDiv = document.getElementById('nucleus-results');
-            const cytoplasmResultsDiv = document.getElementById('cytoplasm-results');
-            
-            // Create summary of tracking results
-            const nucleusValues = results.map(r => r.nucleus_whiteness);
-            const cytoplasmValues = results.map(r => r.cytoplasm_whiteness);
-            
-            const nucleusAvg = nucleusValues.reduce((a, b) => a + b, 0) / nucleusValues.length;
-            const cytoplasmAvg = cytoplasmValues.reduce((a, b) => a + b, 0) / cytoplasmValues.length;
-            
-            nucleusResultsDiv.innerHTML = `
-                <p><strong>📊 Tracking Summary (${results.length} timepoints):</strong></p>
-                <p><strong>Average Nucleus Whiteness:</strong> <span class="whiteness-value">${nucleusAvg.toFixed(4)}</span></p>
-                <p><strong>Range:</strong> ${Math.min(...nucleusValues).toFixed(4)} - ${Math.max(...nucleusValues).toFixed(4)}</p>
-                <p><strong>First Value:</strong> ${results[0].nucleus_whiteness.toFixed(4)}</p>
-                <p><strong>Last Value:</strong> ${results[results.length-1].nucleus_whiteness.toFixed(4)}</p>
-            `;
-            
-            cytoplasmResultsDiv.innerHTML = `
-                <p><strong>📊 Tracking Summary (${results.length} timepoints):</strong></p>
-                <p><strong>Average Cytoplasm Whiteness:</strong> <span class="whiteness-value">${cytoplasmAvg.toFixed(4)}</span></p>
-                <p><strong>Range:</strong> ${Math.min(...cytoplasmValues).toFixed(4)} - ${Math.max(...cytoplasmValues).toFixed(4)}</p>
-                <p><strong>First Value:</strong> ${results[0].cytoplasm_whiteness.toFixed(4)}</p>
-                <p><strong>Last Value:</strong> ${results[results.length-1].cytoplasm_whiteness.toFixed(4)}</p>
-            `;
-            
-            // Show results section
-            resultsDiv.style.display = 'block';
-        }
-
-        function displayWhitenessResults(data) {
-            const resultsDiv = document.getElementById('whiteness-results');
-            const nucleusResultsDiv = document.getElementById('nucleus-results');
-            const cytoplasmResultsDiv = document.getElementById('cytoplasm-results');
-            
-            // Display nucleus results
-            if (data.nucleus_selection) {
-                const nucleus = data.nucleus_selection;
-                nucleusResultsDiv.innerHTML = `
-                    <p><strong>Whiteness:</strong> <span class="whiteness-value">${nucleus.whiteness.toFixed(4)}</span></p>
-                    <p><strong>Mean Grayscale:</strong> ${nucleus.mean_grayscale.toFixed(2)}</p>
-                    <p><strong>Average Pixel Intensity:</strong> ${nucleus.avg_pixel_intensity.toFixed(2)}</p>
-                `;
-            } else {
-                nucleusResultsDiv.innerHTML = '<p>No nucleus selection data available.</p>';
-            }
-            
-            // Display cytoplasm results
-            if (data.cytoplasm_selection) {
-                const cytoplasm = data.cytoplasm_selection;
-                cytoplasmResultsDiv.innerHTML = `
-                    <p><strong>Whiteness:</strong> <span class="whiteness-value">${cytoplasm.whiteness.toFixed(4)}</span></p>
-                    <p><strong>Mean Grayscale:</strong> ${cytoplasm.mean_grayscale.toFixed(2)}</p>
-                    <p><strong>Average Pixel Intensity:</strong> ${cytoplasm.avg_pixel_intensity.toFixed(2)}</p>
-                `;
-            } else {
-                cytoplasmResultsDiv.innerHTML = '<p>No cytoplasm selection data available.</p>';
-            }
-            
-            // Show results section
-            resultsDiv.style.display = 'block';
-        }
-
-        function previousTimepoint() {
-            const currentIndex = allTimepoints.indexOf(currentTimepoint);
-            if (currentIndex > 0) {
-                const prevTimepoint = allTimepoints[currentIndex - 1];
-                document.getElementById('timepoint-select').value = prevTimepoint;
-                loadTimepoint();
-            }
-        }
-
-        function nextTimepoint() {
-            const currentIndex = allTimepoints.indexOf(currentTimepoint);
-            if (currentIndex < allTimepoints.length - 1) {
-                const nextTimepoint = allTimepoints[currentIndex + 1];
-                document.getElementById('timepoint-select').value = nextTimepoint;
-                loadTimepoint();
-            }
-        }
-
+        // =================== TIMEPOINT ===================
         async function loadTimepoints() {
             try {
                 const response = await fetch('/api/timepoints');
@@ -1643,21 +1216,15 @@ window.onload = function () {
                 const data = await response.json();
 
                 if (response.ok && data.cells.length > 0) {
-                    // Get the first cell for this timepoint (they should all be the same timepoint)
                     const cell = data.cells[0];
-
-                    // Display aligned images from the same timepoint
                     displayAlignedImages(cell.nucleus.path, cell.nucleus_cytoplasm.path, timepoint);
+                    currentFilename = cell.nucleus.filename;  // lưu filename từ backend
 
-                    // Update info
+
                     if (!isTracking) {
                         document.getElementById('timepoint-info').textContent =
-                            `File ${timepoint + 1} of ${allTimepoints.length} - Click once to start selection, click again to finish.`;
+                            `File ${timepoint + 1} of ${allTimepoints.length} - Click on a nucleus to select.`;
                     }
-
-                    // Update navigation buttons
-                    updateNavigationButtons();
-
                 } else {
                     showError(`No cells found for timepoint ${timepoint}`);
                 }
@@ -1666,59 +1233,47 @@ window.onload = function () {
             }
         }
 
-        // Load timepoints on page load
+        // =================== PAGE LOAD ===================
         window.onload = function () {
             loadTimepoints();
             updateUploadStatus();
         };
+        function setNucleusSelectionMode() {
+            isNucleusSelectionMode = true;
+            document.getElementById('nucleus-mode-btn').classList.remove('btn-secondary');
+            document.getElementById('cytoplasm-mode-btn').classList.add('btn-secondary');
+        }
 
-        // Upload-related functions
+        function setCytoplasmSelectionMode() {
+            isNucleusSelectionMode = false;
+            document.getElementById('cytoplasm-mode-btn').classList.remove('btn-secondary');
+            document.getElementById('nucleus-mode-btn').classList.add('btn-secondary');
+        }
+
+
+
         function updateUploadStatus() {
             fetch('/api/all-cells')
                 .then(res => res.json())
                 .then(data => {
                     const statusText = document.getElementById('upload-status-text');
                     if (data.total_cells > 0) {
-                        statusText.innerHTML = `✅ <strong>${data.total_cells}</strong> image pairs from uploaded folders ready for analysis`;
+                        statusText.innerHTML = `✅ <strong>${data.total_cells}</strong> image pairs ready for analysis`;
                         statusText.style.color = '#28a745';
                     } else {
-                        statusText.innerHTML = 'No image folders uploaded yet. Upload folders containing images for both channels to start analysis.';
+                        statusText.innerHTML = 'No image folders uploaded yet.';
                         statusText.style.color = '#666';
                     }
                 })
                 .catch(err => {
                     console.error('Error updating upload status:', err);
                     const statusText = document.getElementById('upload-status-text');
-                    statusText.innerHTML = 'Error checking upload status. Please refresh the page.';
+                    statusText.innerHTML = 'Error checking upload status.';
                     statusText.style.color = '#dc3545';
                 });
         }
-
-        function clearUploads() {
-            if (confirm('Are you sure you want to clear all uploaded image folders? This action cannot be undone.')) {
-                fetch('/clear-uploads', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                })
-                .then(res => {
-                    if (res.ok) {
-                        alert('All uploaded image folders have been cleared.');
-                        updateUploadStatus();
-                        // Reload the page to reset the interface
-                        location.reload();
-                    } else {
-                        throw new Error('Failed to clear uploads');
-                    }
-                })
-                .catch(err => {
-                    console.error('Error clearing uploads:', err);
-                    alert('Error clearing uploads: ' + err.message);
-                });
-            }
-        }
     </script>
+
 </body>
 
 </html>
