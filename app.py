@@ -23,6 +23,10 @@ from openpyxl import Workbook
 from datetime import datetime
 import uuid
 import shutil
+import base64 # For encoding/decoding base64 images
+
+
+
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Change this in production
@@ -428,6 +432,224 @@ def get_cells_by_timepoint(timepoint):
             'total_cells': 0,
             'cells': []
         })
+def segment_cytoplasm_from_nucleus(cytoplasm_img_path, nucleus_mask, gradient_thresh=30, max_dilate=50):
+    """
+    Segment cytoplasm starting from nucleus mask.
+    - Giãn mask nhân ra xung quanh
+    - Dừng khi gặp vùng sáng (gradient > gradient_thresh)
+    """
+    # Load cytoplasm image (grayscale)
+    img = cv2.imread(cytoplasm_img_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return None
+
+    # Compute gradient magnitude
+    grad_x = cv2.Sobel(img, cv2.CV_16S, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(img, cv2.CV_16S, 0, 1, ksize=3)
+    grad_mag = cv2.magnitude(grad_x.astype(np.float32), grad_y.astype(np.float32))
+    barrier = (grad_mag > gradient_thresh).astype(np.uint8) * 255
+
+    # Dilate nucleus mask
+    cytoplasm_mask = nucleus_mask.copy()
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+
+    for _ in range(max_dilate):
+        dilated = cv2.dilate(cytoplasm_mask, kernel, iterations=1)
+        # Stop at barrier
+        dilated[barrier==255] = 0
+        cytoplasm_mask = np.maximum(cytoplasm_mask, dilated)
+
+    return cytoplasm_mask
+@app.route('/api/select-cytoplasm', methods=['POST'])
+def select_cytoplasm():
+    """
+    Nhận click (x, y), lấy mask nhân tại điểm đó, giãn ra bào tương
+    """
+    data = request.json
+    image_filename = data.get("image_filename")
+    if not image_filename:
+        return jsonify({"error": "Missing image filename"}), 400
+
+    click_x = data.get("click_x")
+    click_y = data.get("click_y")
+    if click_x is None or click_y is None:
+        return jsonify({"error": "Missing click coordinates"}), 400
+
+    # Lấy path ảnh ch002 (nucleus+cytoplasm)
+    image_path = os.path.join(CH002_FOLDER, image_filename)
+    if not os.path.exists(image_path):
+        return jsonify({"error": f"Image not found: {image_path}"}), 404
+
+    # Chọn mask nhân tại điểm click
+    nucleus_mask, _, _ = select_nucleus_at_point(image_path, click_x, click_y)
+    if nucleus_mask is None:
+        return jsonify({"error": "No nucleus found at this point"}), 404
+
+    # Tách bào tương từ mask nhân
+    cytoplasm_mask = segment_cytoplasm_from_nucleus(image_path, nucleus_mask)
+    if cytoplasm_mask is None:
+        return jsonify({"error": "Failed to segment cytoplasm"}), 500
+
+    # Convert mask sang polygon (contour)
+    contours, _ = cv2.findContours(cytoplasm_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return jsonify({"error": "No cytoplasm contour found"}), 500
+
+    cyto_contour = [(int(pt[0][0]), int(pt[0][1])) for pt in contours[0]]
+
+    return jsonify({
+        "cytoplasm_contour": cyto_contour
+    })
+
+import cv2
+import numpy as np
+
+def fill_inner_holes(mask, gray_img, circularity_thresh=0.6, area_ratio_thresh=0.3, elongation_thresh=3.0):
+    """
+    Lấp lỗ bên trong nhân nhưng bỏ qua rãnh dài giữa các nhân.
+    Dựa trên độ tròn + tỷ lệ diện tích + độ đậm bên trong + elongation.
+    """
+    mask_filled = mask.copy()
+    contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+
+    if hierarchy is not None:
+        for i, h in enumerate(hierarchy[0]):
+            parent_idx = h[3]
+            if parent_idx != -1:  # contour con
+                area = cv2.contourArea(contours[i])
+                perimeter = cv2.arcLength(contours[i], True)
+                circularity = 4 * np.pi * area / (perimeter**2 + 1e-6)
+
+                # contour cha (nhân chứa nó)
+                parent_area = cv2.contourArea(contours[parent_idx]) if parent_idx >= 0 else 1e9
+                area_ratio = area / (parent_area + 1e-6)
+
+                # elongation = chiều dài lớn nhất / chiều dài nhỏ nhất
+                x, y, w, h_rect = cv2.boundingRect(contours[i])
+                elongation = max(w, h_rect) / (min(w, h_rect) + 1e-6)
+
+                # trung bình mức xám bên trong lỗ
+                mask_hole = np.zeros_like(mask)
+                cv2.drawContours(mask_hole, [contours[i]], -1, 255, -1)
+                mean_val = cv2.mean(gray_img, mask=mask_hole)[0]
+
+                # Điều kiện: hình tròn + nhỏ so với cha + không quá tối + không dài mảnh
+                if circularity > circularity_thresh and area_ratio < area_ratio_thresh \
+                   and mean_val > 30 and elongation < elongation_thresh:
+                    cv2.drawContours(mask_filled, [contours[i]], -1, 255, -1)
+
+    return mask_filled
+
+
+def segment_nuclei(image_path, min_area=50):
+    import cv2
+    import numpy as np
+
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return None, [], []
+
+    # 1️⃣ Tăng tương phản
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+    enhanced = clahe.apply(img)
+
+    # 2️⃣ Ngưỡng hóa (Otsu)
+    _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # 3️⃣ Morphology nhẹ để loại nhiễu
+    kernel = np.ones((3,3), np.uint8)
+    mask = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    # 4️⃣ Lấp lỗ trong nhân (truyền enhanced để phân biệt lỗ thật / rãnh)
+    mask_filled = fill_inner_holes(mask, enhanced)
+
+    # 5️⃣ Lấy contours & centroid
+    contours, _ = cv2.findContours(mask_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    valid_contours, centroids = [], []
+    for cnt in contours:
+        if cv2.contourArea(cnt) < min_area:
+            continue
+        valid_contours.append(cnt)
+        M = cv2.moments(cnt)
+        if M["m00"] > 0:
+            cx = int(M["m10"]/M["m00"])
+            cy = int(M["m01"]/M["m00"])
+            centroids.append((cx, cy))
+
+    return mask_filled, valid_contours, centroids
+
+
+
+
+
+
+
+
+def select_nucleus_at_point(image_path, click_x, click_y):
+    """
+    Chọn nhân chứa điểm click (click_x, click_y)
+    Trả về: mask của nhân, contour, centroid
+    """
+    mask, contours, centroids = segment_nuclei(image_path)
+    selected_mask = np.zeros_like(mask)
+    selected_contour = None
+    selected_centroid = None
+
+    for i, cnt in enumerate(contours):
+        if cv2.pointPolygonTest(cnt, (click_x, click_y), False) >= 0:
+            selected_contour = cnt
+            M = cv2.moments(cnt)
+            if M['m00'] > 0:
+                cx = int(M['m10']/M['m00'])
+                cy = int(M['m01']/M['m00'])
+                selected_centroid = (cx, cy)
+            cv2.drawContours(selected_mask, [cnt], -1, 255, -1)
+            break
+
+    if selected_contour is None:
+        return None, None, None
+
+    return selected_mask, selected_contour, selected_centroid
+@app.route('/api/select-nucleus', methods=['POST'])
+def select_nucleus():
+    """
+    Nhận click (x, y) từ client và trả về contour + centroid + diện tích của nhân chứa điểm đó
+    """
+    data = request.json
+    image_filename = data.get("image_filename")
+    channel = data.get("channel", "ch002")
+    click_x = data.get("click_x")
+    click_y = data.get("click_y")
+
+    if not all([image_filename, click_x is not None, click_y is not None]):
+        return jsonify({"error": "Missing parameters"}), 400
+
+    # Chọn folder theo channel
+    if channel == "ch002":
+        image_path = os.path.join(CH002_FOLDER, image_filename)
+    else:
+        image_path = os.path.join(CH00_FOLDER, image_filename)
+
+    if not os.path.exists(image_path):
+        return jsonify({"error": f"Image not found: {image_path}"}), 404
+
+    mask, contour, centroid = select_nucleus_at_point(image_path, click_x, click_y)
+    if mask is None or contour is None:
+        return jsonify({"error": "No nucleus found at this point"}), 404
+
+    area = int(cv2.contourArea(contour))
+
+    # Convert contour sang list (danh sách [x, y])
+    contour_list = [(int(pt[0][0]), int(pt[0][1])) for pt in contour]
+
+    return jsonify({
+        "centroid": {"x": centroid[0], "y": centroid[1]},
+        "area": area,
+        "contour": contour_list
+    })
+
+
 
 @app.route('/images/ch00/<filename>')
 def serve_ch00_image(filename):
