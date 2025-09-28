@@ -671,6 +671,17 @@
             color: #666;
             font-size: 1.1em;
         }
+        .nucleus-contour {
+            fill: none;
+            stroke: red;
+            stroke-width: 0.8;
+        }
+        .cytoplasm-contour {
+            fill: none;
+            stroke: green;
+            stroke-width: 0.8;
+        }
+
 
         @media (max-width: 768px) {
             .image-grid {
@@ -789,54 +800,56 @@
                 <div class="image-grid">
 
                     <!-- Nucleus -->
-        <div class="image-card">
-            <div class="image-header">
-                <h3>🧬 Nucleus Only</h3>
-                <p id="nucleus-info">Channel ch00</p>
+<div class="image-card">
+    <div class="image-header">
+        <h3>🧬 Nucleus Only</h3>
+        <p id="nucleus-info">Channel ch00</p>
+    </div>
+    <div class="image-container" id="nucleus-container">
+        <img id="nucleus-image" class="cell-image" alt="Nucleus Image"
+            onclick="handleImageClick(event, 'nucleus')">
+        <!-- Đổi div thành svg -->
+        <svg class="cell-overlay" id="nucleus-overlay"></svg>
+    </div>
+    <div class="image-info">
+        <div class="info-grid">
+            <div class="info-item">
+                <div class="info-label">File</div>
+                <div class="info-value" id="nucleus-timepoint">-</div>
             </div>
-            <div class="image-container" id="nucleus-container">
-                <img id="nucleus-image" class="cell-image" alt="Nucleus Image"
-                    onclick="handleImageClick(event, 'nucleus')">
-                <div class="cell-overlay" id="nucleus-overlay"></div>
-            </div>
-            <div class="image-info">
-                <div class="info-grid">
-                    <div class="info-item">
-                        <div class="info-label">File</div>
-                        <div class="info-value" id="nucleus-timepoint">-</div>
-                    </div>
-                    <div class="info-item">
-                        <div class="info-label">Location</div>
-                        <div class="info-value" id="nucleus-location">-</div>
-                    </div>
-                </div>
+            <div class="info-item">
+                <div class="info-label">Location</div>
+                <div class="info-value" id="nucleus-location">-</div>
             </div>
         </div>
+    </div>
+</div>
 
-        <!-- Cytoplasm -->
-        <div class="image-card">
-            <div class="image-header">
-                <h3>🔬 Nucleus + Cytoplasm</h3>
-                <p id="cytoplasm-info">Channel ch002</p>
+<!-- Cytoplasm -->
+<div class="image-card">
+    <div class="image-header">
+        <h3>🔬 Nucleus + Cytoplasm</h3>
+        <p id="cytoplasm-info">Channel ch002</p>
+    </div>
+    <div class="image-container" id="cytoplasm-container">
+        <img id="cytoplasm-image" class="cell-image" alt="Cytoplasm Image"
+            onclick="handleImageClick(event, 'cytoplasm')">
+        <!-- Đổi div thành svg -->
+        <svg class="cell-overlay" id="cytoplasm-overlay"></svg>
+    </div>
+    <div class="image-info">
+        <div class="info-grid">
+            <div class="info-item">
+                <div class="info-label">File</div>
+                <div class="info-value" id="cytoplasm-timepoint">-</div>
             </div>
-            <div class="image-container" id="cytoplasm-container">
-                <img id="cytoplasm-image" class="cell-image" alt="Cytoplasm Image"
-                    onclick="handleImageClick(event, 'cytoplasm')">
-                <div class="cell-overlay" id="cytoplasm-overlay"></div>
-            </div>
-            <div class="image-info">
-                <div class="info-grid">
-                    <div class="info-item">
-                        <div class="info-label">File</div>
-                        <div class="info-value" id="cytoplasm-timepoint">-</div>
-                    </div>
-                    <div class="info-item">
-                        <div class="info-label">Location</div>
-                        <div class="info-value" id="cytoplasm-location">-</div>
-                    </div>
-                </div>
+            <div class="info-item">
+                <div class="info-label">Location</div>
+                <div class="info-value" id="cytoplasm-location">-</div>
             </div>
         </div>
+    </div>
+</div>
 
         <!-- Edge navigation buttons -->
         <button class="edge-nav-btn edge-nav-left" onclick="previousTimepoint()" id="edge-prev-btn" disabled>
@@ -873,6 +886,8 @@
         let trackingResults = [];
         let currentTimepoint = null;
         let allTimepoints = [];
+        let confirmedNucleusContour = null;
+        let confirmedCytoplasmContour = null;
         let confirmedContour = null; // thay vì confirmedMask
  // mask từ backend sau khi click chọn nhân
         let isNucleusSelectionMode = true; // giữ để phân biệt nucleus / cytoplasm (nếu mở rộng sau)
@@ -978,14 +993,18 @@
                 if (data.error) {
                     alert("❌ " + data.error);
                 } else {
-                    console.log("✅ Centroid:", data.centroid, "Area:", data.area);
+                    console.log("✅ Nucleus contour:", data.contour);
 
-                    // 👉 hiển thị mask overlay tại đây
-                    // 👉 hiển thị contour overlay
+                    // 👉 Lưu contour nhân
+                    confirmedNucleusContour = data.contour;
+
+                    // Vẽ overlay trên kênh nucleus
                     if (data.contour) {
                         showContourOverlay("nucleus", data.contour);
                     }
 
+                    // Cho phép confirm
+                    document.getElementById("confirm-btn").disabled = false;
                 }
             })
             .catch(err => {
@@ -994,21 +1013,107 @@
         }
 
 
+
+        
+
+
+        function setNucleusSelectionMode() {
+            isNucleusSelectionMode = true;
+            document.getElementById('nucleus-mode-btn').classList.remove('btn-secondary');
+            document.getElementById('cytoplasm-mode-btn').classList.add('btn-secondary');
+            console.log("🟢 Nucleus selection mode enabled. Click on nucleus image to select.");
+        }
+
+        
         function confirmSelection() {
-           if (!confirmedContour) {
-            alert("⚠️ No contour to confirm.");
-            return;
+            if (!confirmedNucleusContour) {
+                alert("⚠️ No nucleus contour to confirm.");
+                return;
+            }
+
+            // vẽ luôn viền nhân sang panel ch002
+            renderCytoplasmOverlay();
+
+            document.getElementById('stats-text').textContent =
+                "🧬 Nucleus confirmed. Now press Cytoplasm Selection.";
+            document.getElementById('stats').style.display = 'block';
+            console.log("✅ Nucleus confirmed & nucleus contour drawn on ch002.");
         }
 
-        showContourOverlay('cytoplasm', confirmedContour);
 
-        document.getElementById('measure-btn').disabled = false;
-        document.getElementById('stats-text').textContent = "🧬 Contour confirmed. Ready to measure whiteness.";
-        document.getElementById('stats').style.display = 'block';
+        function setCytoplasmSelectionMode() {
+            if (!currentFilename || !confirmedNucleusContour) {
+                alert("⚠️ Bạn cần chọn và confirm nhân trước khi chọn bào tương.");
+                return;
+            }
 
-        console.log("✅ Contour confirmed & applied to both images");
+            isNucleusSelectionMode = false; // chuyển sang cytoplasm
 
+            // Bật nút Cytoplasm
+            document.getElementById('cytoplasm-mode-btn').classList.remove('btn-secondary');
+            // Tắt nút Nucleus
+            document.getElementById('nucleus-mode-btn').classList.add('btn-secondary');
+
+            console.log("🟠 Cytoplasm selection mode enabled. Click on cytoplasm image to select.");
+
+            fetch("/api/select-cytoplasm", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    image_filename: currentCytoplasmFilename,
+                    nucleus_contour: confirmedNucleusContour
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) {
+                    alert("❌ " + data.error);
+                } else {
+                    confirmedCytoplasmContour = data.cytoplasm_contour;
+                    renderCytoplasmOverlay(); // vẽ nucleus + cytoplasm trên panel ch002
+                }
+            })
+            .catch(err => console.error("❌ Cytoplasm selection error:", err));
         }
+
+
+        function renderCytoplasmOverlay() {
+            const overlay = document.getElementById("cytoplasm-overlay");
+            overlay.innerHTML = "";
+
+            const cytoImg = document.getElementById("cytoplasm-image");
+
+            if (cytoImg.complete && cytoImg.naturalWidth > 0) {
+                const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+                svg.setAttribute("width", "100%");
+                svg.setAttribute("height", "100%");
+                svg.setAttribute("viewBox", `0 0 ${cytoImg.naturalWidth} ${cytoImg.naturalHeight}`);
+                svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+                // Vẽ viền nhân
+                if (confirmedNucleusContour) {
+                    let nucPoly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+                    nucPoly.setAttribute("points", confirmedNucleusContour.map(pt => pt.join(",")).join(" "));
+                    nucPoly.setAttribute("fill", "rgba(0,255,0,0.1)");  // xanh lá trong suốt
+                    nucPoly.setAttribute("stroke", "lime");              // viền xanh lá
+                    nucPoly.setAttribute("stroke-width", "2");
+                    svg.appendChild(nucPoly);
+                }
+
+                // Vẽ viền bào tương
+                if (confirmedCytoplasmContour) {
+                    let cytoPoly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+                    cytoPoly.setAttribute("points", confirmedCytoplasmContour.map(pt => pt.join(",")).join(" "));
+                    cytoPoly.setAttribute("fill", "rgba(255,0,0,0.1)"); // đỏ trong suốt
+                    cytoPoly.setAttribute("stroke", "red");             // viền đỏ
+                    cytoPoly.setAttribute("stroke-width", "2");
+                    svg.appendChild(cytoPoly);
+                }
+
+                overlay.appendChild(svg);
+            }
+        }
+
        
         
 
@@ -1099,37 +1204,7 @@
             confirmedContour = contour;
             document.getElementById("confirm-btn").disabled = false;
         }
-        function selectCytoplasmFromClick(event) {
-            const img = document.getElementById("cytoplasm-image");
-            const rect = img.getBoundingClientRect();
-            const click_x = Math.round((event.clientX - rect.left) * (img.naturalWidth / rect.width));
-            const click_y = Math.round((event.clientY - rect.top) * (img.naturalHeight / rect.height));
 
-            if (!currentFilename) {
-                alert("❌ No filename loaded.");
-                return;
-            }
-
-            fetch("/api/select-cytoplasm", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    image_filename: currentFilename,
-                    click_x,
-                    click_y
-                })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.error) {
-                    alert("❌ " + data.error);
-                } else {
-                    console.log("✅ Cytoplasm contour:", data.cytoplasm_contour);
-                    showContourOverlay("cytoplasm", data.cytoplasm_contour);
-                }
-            })
-            .catch(err => console.error("❌ Cytoplasm selection error:", err));
-        }
 
         function handleImageClick(event, channel) {
             if (isNucleusSelectionMode && channel === 'nucleus') {
@@ -1219,7 +1294,7 @@
                     const cell = data.cells[0];
                     displayAlignedImages(cell.nucleus.path, cell.nucleus_cytoplasm.path, timepoint);
                     currentFilename = cell.nucleus.filename;  // lưu filename từ backend
-
+                    currentCytoplasmFilename = cell.nucleus_cytoplasm.filename;
 
                     if (!isTracking) {
                         document.getElementById('timepoint-info').textContent =
@@ -1244,11 +1319,7 @@
             document.getElementById('cytoplasm-mode-btn').classList.add('btn-secondary');
         }
 
-        function setCytoplasmSelectionMode() {
-            isNucleusSelectionMode = false;
-            document.getElementById('cytoplasm-mode-btn').classList.remove('btn-secondary');
-            document.getElementById('nucleus-mode-btn').classList.add('btn-secondary');
-        }
+        
 
 
 
