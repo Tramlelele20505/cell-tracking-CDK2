@@ -706,6 +706,21 @@
 
 
 <body>
+    <!-- ================= TRACKING PANEL ================= -->
+    <div id="tracking-panel" style="margin-top: 20px; display: block; text-align: center;">
+        <h3>📊 Tracking brightness for selected cell</h3>
+        <div style="margin-bottom: 10px;">
+            <label>Start File: </label>
+            <input type="number" id="start-file" min="1" style="width: 80px; text-align: center;">
+            &nbsp;&nbsp;
+            <label>End File: </label>
+            <input type="number" id="end-file" min="1" style="width: 80px; text-align: center;">
+        </div>
+        <button id="track-btn" class="btn btn-primary" onclick="startBrightnessTracking()">🚀 Track Brightness & Export</button>
+    </div>
+    
+
+
     <div class="container">
         <div class="header">
             <h1>🔬 Cell Image Viewer</h1>
@@ -727,14 +742,8 @@
 
         <div class="controls">
             <div class="timepoint-controls">
-                <div class="timepoint-navigation">
-                    <label for="timepoint-select">File:</label>
-                    <select id="timepoint-select" onchange="loadTimepoint()">
-                        <option value="">Loading files...</option>
-                    </select>
-                    <span id="timepoint-info">Select a file to view aligned images</span>
-                </div>
                 <div class="selection-controls">
+                    <!-- Vùng chọn loại selection -->
                     <div class="selection-mode-controls">
                         <label style="font-weight: 600; margin-right: 10px; color: #2c3e50;">Selection Mode:</label>
                         <button class="btn" onclick="setNucleusSelectionMode()" id="nucleus-mode-btn">
@@ -743,8 +752,11 @@
                         <button class="btn btn-secondary" onclick="setCytoplasmSelectionMode()" id="cytoplasm-mode-btn">
                             🔬 Cytoplasm Selection
                         </button>
-                        <button class="btn btn-secondary" onclick="togglePolygonMode()" id="polygon-mode-btn" title="Click to draw connected lines (freeform polygon)">📐 Polygon</button>
+                        <button class="btn btn-secondary" onclick="togglePolygonMode()" id="polygon-mode-btn" 
+                            title="Click to draw connected lines (freeform polygon)">📐 Polygon</button>
                     </div>
+
+                    <!-- Các nút chọn, xóa, đo -->
                     <div class="selection-buttons">
                         <button class="btn btn-secondary" onclick="clearSelection()" id="clear-btn" disabled>
                             🗑️ Clear Selection
@@ -756,19 +768,30 @@
                             📊 Measure Whiteness
                         </button>
                     </div>
-                    <div class="tracking-controls" id="tracking-controls" style="display: none;">
-                        <div class="tracking-range">
-                            <label for="start-timepoint">Start File:</label>
-                            <input type="number" id="start-timepoint" min="0" max="4716" placeholder="Start file">
-                            <label for="end-timepoint">End File:</label>
-                            <input type="number" id="end-timepoint" min="0" max="4716" placeholder="End file">
+
+                    <!-- ⚡ Tracking controls -->
+                    <div class="tracking-controls" id="tracking-controls" style="margin-top:10px;">
+                        <div class="tracking-range" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                            <label for="start-timepoint-select">Start File:</label>
+                            <select id="start-timepoint-select" onchange="loadStartTimepoint()" 
+                                style="padding:4px 8px; border-radius:6px; min-width:160px;">
+                                <option value="">Select start...</option>
+                            </select>
+
+                            <label for="end-timepoint-select">End File:</label>
+                            <select id="end-timepoint-select" 
+                                style="padding:4px 8px; border-radius:6px; min-width:160px;">
+                                <option value="">Select end...</option>
+                            </select>
                         </div>
-                        <div class="tracking-buttons">
-                            <button class="btn btn-warning" onclick="startAutoTracking()" id="auto-track-btn">
+
+                        <div class="tracking-buttons" style="margin-top:8px;">
+                            <button class="btn btn-warning" onclick="startBrightnessTracking()" id="auto-track-btn">
                                 🎯 Start Auto-Tracking
                             </button>
                             <button class="btn btn-secondary" onclick="exportToExcel()">📄 Export to Excel</button>
                         </div>
+
                         <div id="tracking-progress" style="display: none;">
                             <div class="progress-bar">
                                 <div class="progress-fill" id="progress-fill"></div>
@@ -779,6 +802,7 @@
                 </div>
             </div>
         </div>
+
 
         <div class="content">
             <div id="stats" class="stats" style="display: none;">
@@ -1257,51 +1281,24 @@
         }
 
         // =================== TIMEPOINT ===================
-        async function loadTimepoints() {
-            try {
-                const response = await fetch('/api/timepoints');
-                const data = await response.json();
-
-                if (response.ok) {
-                    allTimepoints = data.timepoints;
-                    const select = document.getElementById('timepoint-select');
-                    select.innerHTML = '<option value="">Select a timepoint...</option>';
-
-                    allTimepoints.forEach(timepoint => {
-                        const option = document.createElement('option');
-                        option.value = timepoint;
-                        option.textContent = `File ${timepoint + 1} of ${allTimepoints.length}`;
-                        select.appendChild(option);
-                    });
-                }
-            } catch (error) {
-                console.error('Failed to load timepoints:', error);
-            }
-        }
-
-        async function loadTimepoint() {
-            const timepoint = document.getElementById('timepoint-select').value;
-            if (!timepoint) return;
+        async function loadStartTimepoint() {
+            const startValue = document.getElementById('start-timepoint-select').value;
+            if (!startValue) return;
 
             showLoading();
-            currentTimepoint = parseInt(timepoint);
+            currentTimepoint = parseInt(startValue);
 
             try {
-                const response = await fetch(`/api/cells-by-timepoint/${timepoint}`);
+                const response = await fetch(`/api/cells-by-timepoint/${startValue}`);
                 const data = await response.json();
 
                 if (response.ok && data.cells.length > 0) {
                     const cell = data.cells[0];
-                    displayAlignedImages(cell.nucleus.path, cell.nucleus_cytoplasm.path, timepoint);
-                    currentFilename = cell.nucleus.filename;  // lưu filename từ backend
+                    displayAlignedImages(cell.nucleus.path, cell.nucleus_cytoplasm.path, currentTimepoint);
+                    currentFilename = cell.nucleus.filename;
                     currentCytoplasmFilename = cell.nucleus_cytoplasm.filename;
-
-                    if (!isTracking) {
-                        document.getElementById('timepoint-info').textContent =
-                            `File ${timepoint + 1} of ${allTimepoints.length} - Click on a nucleus to select.`;
-                    }
                 } else {
-                    showError(`No cells found for timepoint ${timepoint}`);
+                    showError(`No cells found for timepoint ${startValue}`);
                 }
             } catch (error) {
                 showError('Network error: ' + error.message);
@@ -1318,6 +1315,7 @@
             document.getElementById('nucleus-mode-btn').classList.remove('btn-secondary');
             document.getElementById('cytoplasm-mode-btn').classList.add('btn-secondary');
         }
+        
 
         
 
@@ -1343,6 +1341,152 @@
                     statusText.style.color = '#dc3545';
                 });
         }
+        async function startBrightnessTracking() {
+            if (!confirmedNucleusContour || !confirmedCytoplasmContour) {
+                alert("⚠️ Bạn cần chọn và xác nhận vùng nhân & bào tương trước.");
+                return;
+            }
+
+            const start = parseInt(document.getElementById('start-file').value);
+            const end = parseInt(document.getElementById('end-file').value);
+
+            if (isNaN(start) || isNaN(end) || start < 1 || end < start) {
+                alert("❌ Vui lòng nhập khoảng file hợp lệ (ví dụ: 1 → 10).");
+                return;
+            }
+
+            const res = await fetch('/api/track-cell-brightness', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    nucleus_contour: confirmedNucleusContour,
+                    cytoplasm_contour: confirmedCytoplasmContour,
+                    start_timepoint: start,
+                    end_timepoint: end
+                })
+            });
+
+            const data = await res.json();
+            if (data.error) {
+                alert("❌ " + data.error);
+            } else {
+                alert(`✅ Tracking completed. Excel saved: ${data.filename}`);
+                console.log("📊 Tracking result:", data);
+            }
+        }
+       async function loadTimepoints() {
+            try {
+                const response = await fetch('/api/timepoints');
+                const data = await response.json();
+
+                if (response.ok) {
+                    allTimepoints = data.timepoints;
+
+                    const startSelect = document.getElementById('start-timepoint-select');
+                    const endSelect = document.getElementById('end-timepoint-select');
+
+                    // Reset dropdowns
+                    startSelect.innerHTML = '<option value="">Select start...</option>';
+                    endSelect.innerHTML = '<option value="">Select end...</option>';
+
+                    // Thêm các option từ API
+                    allTimepoints.forEach((timepoint, idx) => {
+                        const label = `File ${idx + 1} of ${allTimepoints.length}`;
+                        const opt1 = new Option(label, timepoint);
+                        const opt2 = new Option(label, timepoint);
+                        startSelect.add(opt1);
+                        endSelect.add(opt2);
+                    });
+                }
+            } catch (error) {
+                console.error('❌ Failed to load timepoints:', error);
+            }
+        }
+   async function startBrightnessTracking() {
+    // ✅ Kiểm tra vùng chọn
+    if (!confirmedNucleusContour || !confirmedCytoplasmContour) {
+        alert("⚠️ Bạn cần chọn và xác nhận vùng nhân & bào tương trước.");
+        return;
+    }
+
+    // ✅ Lấy giá trị start và end từ dropdown
+    const start = parseInt(document.getElementById('start-timepoint-select').value);
+    const end = parseInt(document.getElementById('end-timepoint-select').value);
+
+    if (isNaN(start) || isNaN(end) || start < 0 || end < start) {
+        alert("❌ Vui lòng chọn khoảng file hợp lệ (VD: File 1 → File 10).");
+        return;
+    }
+
+    try {
+        // 🔹 Gửi yêu cầu tới server
+        const res = await fetch('/api/track-cell-brightness', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                nucleus_contour: confirmedNucleusContour,
+                cytoplasm_contour: confirmedCytoplasmContour,
+                start_timepoint: start,
+                end_timepoint: end
+            })
+        });
+
+        const data = await res.json();
+
+        if (data.error) {
+            alert("❌ " + data.error);
+            return;
+        }
+
+        // 🟡 Xóa link cũ nếu có
+        const oldLink = document.getElementById('excel-download-link');
+        if (oldLink) oldLink.remove();
+
+        const trackingPanel = document.getElementById('tracking-panel');
+        if (!trackingPanel) {
+            console.warn("Tracking panel not found. Link sẽ không hiển thị.");
+            alert("⚠️ Không tìm thấy vùng hiển thị link. Vui lòng kiểm tra HTML.");
+            return;
+        }
+
+        // 🔹 Tạo link tải file Excel
+        let downloadLink = document.createElement('a');
+        downloadLink.id = 'excel-download-link';
+        downloadLink.style.display = 'block';
+        downloadLink.style.marginTop = '10px';
+        downloadLink.style.fontWeight = '600';
+        downloadLink.style.color = '#007bff';
+        downloadLink.style.textDecoration = 'none';
+
+        if (data.fileContent) {
+            // Nếu server trả nội dung file (blob)
+            const blob = new Blob([data.fileContent], {
+                type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            });
+            const downloadUrl = URL.createObjectURL(blob);
+            downloadLink.href = downloadUrl;
+            downloadLink.download = data.fileName || 'whiteness.xlsx';
+            downloadLink.textContent = `📄 Tải file Excel: ${downloadLink.download}`;
+        } else if (data.file) {
+            // Nếu server trả đường dẫn file trên server
+            downloadLink.href = `/download/${encodeURIComponent(data.file)}`;
+            downloadLink.download = data.file;
+            downloadLink.textContent = `📄 Tải file Excel: ${data.file}`;
+        } else {
+            alert("❌ Server không trả file Excel hợp lệ.");
+            return;
+        }
+
+        trackingPanel.appendChild(downloadLink);
+        alert("✅ Tracking hoàn tất. File Excel sẵn sàng để tải về.");
+
+    } catch (err) {
+        console.error('❌ Tracking error:', err);
+        alert('❌ Lỗi khi tracking. Kiểm tra console để xem chi tiết.');
+    }
+}
+
+
     </script>
 
 </body>
