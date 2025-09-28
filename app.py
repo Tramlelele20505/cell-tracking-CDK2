@@ -432,77 +432,142 @@ def get_cells_by_timepoint(timepoint):
             'total_cells': 0,
             'cells': []
         })
-def segment_cytoplasm_from_nucleus(cytoplasm_img_path, nucleus_mask, gradient_thresh=30, max_dilate=50):
+
+def segment_cytoplasm_from_nucleus(cytoplasm_img_path, nucleus_mask,
+                                   denoise_h=10,
+                                   dilate_px=3,        # dilate nhân 5-10 px
+                                   bright_thresh=30,
+                                   dark_thresh=20,
+                                   dark_region_ratio=0.1):
     """
-    Segment cytoplasm starting from nucleus mask.
-    - Giãn mask nhân ra xung quanh
-    - Dừng khi gặp vùng sáng (gradient > gradient_thresh)
+    Segment cytoplasm quanh nucleus bằng region growing có kiểm tra hố tối.
+    Nhân được dilate và coi là vùng sáng để region growing luôn bao quanh nhân.
+    Trả về final_mask (uint8 0/255).
     """
-    # Load cytoplasm image (grayscale)
+    import cv2
+    import numpy as np
+
+    # 1️⃣ Đọc ảnh & khử nhiễu
     img = cv2.imread(cytoplasm_img_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         return None
 
-    # Compute gradient magnitude
-    grad_x = cv2.Sobel(img, cv2.CV_16S, 1, 0, ksize=3)
-    grad_y = cv2.Sobel(img, cv2.CV_16S, 0, 1, ksize=3)
-    grad_mag = cv2.magnitude(grad_x.astype(np.float32), grad_y.astype(np.float32))
-    barrier = (grad_mag > gradient_thresh).astype(np.uint8) * 255
+    blur = cv2.fastNlMeansDenoising(img, None, h=denoise_h,
+                                    templateWindowSize=7, searchWindowSize=21)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    blur = clahe.apply(blur)
 
-    # Dilate nucleus mask
-    cytoplasm_mask = nucleus_mask.copy()
+    h, w = img.shape
+
+    # 2️⃣ Dilate nhân 5–10 px để seed lớn hơn nhân
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+    dilated_nucleus = cv2.dilate(nucleus_mask, kernel, iterations=dilate_px)
 
-    for _ in range(max_dilate):
-        dilated = cv2.dilate(cytoplasm_mask, kernel, iterations=1)
-        # Stop at barrier
-        dilated[barrier==255] = 0
-        cytoplasm_mask = np.maximum(cytoplasm_mask, dilated)
+    # 3️⃣ Gán toàn bộ vùng nhân + dilate là sáng (255)
+    blur[dilated_nucleus > 0] = 255
 
-    return cytoplasm_mask
+    # 4️⃣ Region growing
+    visited = np.zeros_like(img, dtype=np.uint8)
+    mask = np.zeros_like(img, dtype=np.uint8)
+
+    seed_pts = np.column_stack(np.where(dilated_nucleus > 0))
+    stack = [tuple(pt[::-1]) for pt in seed_pts]  # (x, y)
+
+    while stack:
+        x, y = stack.pop()
+        if not (0 <= x < w and 0 <= y < h):
+            continue
+        if visited[y, x]:
+            continue
+        visited[y, x] = 1
+
+        val = blur[y, x]
+
+        if val >= bright_thresh:  # cytoplasm sáng
+            mask[y, x] = 255
+            for dx in [-1,0,1]:
+                for dy in [-1,0,1]:
+                    if dx == 0 and dy == 0:
+                        continue
+                    stack.append((x+dx, y+dy))
+
+        elif val <= dark_thresh:
+            # kiểm tra hố tối
+            neigh = blur[max(0,y-2):min(h,y+3), max(0,x-2):min(w,x+3)]
+            dark_ratio = np.mean(neigh < dark_thresh)
+            if dark_ratio < dark_region_ratio:  # chỉ là nhiễu
+                mask[y, x] = 255
+                for dx in [-1,0,1]:
+                    for dy in [-1,0,1]:
+                        if dx == 0 and dy == 0:
+                            continue
+                        stack.append((x+dx, y+dy))
+            # else: hố tối thật → dừng lại
+
+    # 5️⃣ Hậu xử lý
+    clean = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=3)
+    clean = cv2.morphologyEx(clean, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    # Lấy contour lớn nhất
+    contours, _ = cv2.findContours(clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    max_cnt = max(contours, key=cv2.contourArea)
+    final_mask = np.zeros_like(img, dtype=np.uint8)
+    cv2.drawContours(final_mask, [max_cnt], -1, 255, -1)
+
+    # Làm mềm biên
+    blurred = cv2.GaussianBlur(final_mask, (5,5), 0)
+    _, final_mask = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY)
+
+    return final_mask
+
+
+
+
 @app.route('/api/select-cytoplasm', methods=['POST'])
 def select_cytoplasm():
-    """
-    Nhận click (x, y), lấy mask nhân tại điểm đó, giãn ra bào tương
-    """
     data = request.json
     image_filename = data.get("image_filename")
+    nucleus_contour = data.get("nucleus_contour")
+
     if not image_filename:
         return jsonify({"error": "Missing image filename"}), 400
+    if not nucleus_contour:
+        return jsonify({"error": "Missing nucleus contour"}), 400
 
-    click_x = data.get("click_x")
-    click_y = data.get("click_y")
-    if click_x is None or click_y is None:
-        return jsonify({"error": "Missing click coordinates"}), 400
-
-    # Lấy path ảnh ch002 (nucleus+cytoplasm)
     image_path = os.path.join(CH002_FOLDER, image_filename)
     if not os.path.exists(image_path):
         return jsonify({"error": f"Image not found: {image_path}"}), 404
 
-    # Chọn mask nhân tại điểm click
-    nucleus_mask, _, _ = select_nucleus_at_point(image_path, click_x, click_y)
-    if nucleus_mask is None:
-        return jsonify({"error": "No nucleus found at this point"}), 404
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return jsonify({"error": "Failed to read image"}), 500
 
-    # Tách bào tương từ mask nhân
+    # build mask từ nucleus contour
+    nucleus_mask = np.zeros_like(img, dtype=np.uint8)
+    pts = np.array(nucleus_contour, dtype=np.int32).reshape((-1, 1, 2))
+    cv2.fillPoly(nucleus_mask, [pts], 255)
+
+    # chạy cytoplasm segmentation
     cytoplasm_mask = segment_cytoplasm_from_nucleus(image_path, nucleus_mask)
     if cytoplasm_mask is None:
         return jsonify({"error": "Failed to segment cytoplasm"}), 500
 
-    # Convert mask sang polygon (contour)
+    # convert sang contour polygon
     contours, _ = cv2.findContours(cytoplasm_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return jsonify({"error": "No cytoplasm contour found"}), 500
 
-    cyto_contour = [(int(pt[0][0]), int(pt[0][1])) for pt in contours[0]]
+    max_cnt = max(contours, key=cv2.contourArea)
+    eps = 0.01 * cv2.arcLength(max_cnt, True)
+    approx = cv2.approxPolyDP(max_cnt, eps, True)
+    cyto_contour = [(int(pt[0][0]), int(pt[0][1])) for pt in approx]
 
-    return jsonify({
-        "cytoplasm_contour": cyto_contour
-    })
+    return jsonify({"cytoplasm_contour": cyto_contour})
 
-import cv2
-import numpy as np
+
 
 def fill_inner_holes(mask, gray_img, circularity_thresh=0.6, area_ratio_thresh=0.3, elongation_thresh=3.0):
     """
