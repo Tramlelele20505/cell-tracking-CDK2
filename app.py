@@ -24,6 +24,10 @@ from datetime import datetime
 import uuid
 import shutil
 import base64 # For encoding/decoding base64 images
+from flask import send_from_directory
+import os
+
+
 
 
 
@@ -835,258 +839,266 @@ def measure_whiteness(image_path, selection):
 
 @app.route('/api/measure-both-whiteness', methods=['POST'])
 def measure_both_whiteness():
+    """
+    Đo độ sáng trung bình và tỉ lệ trắng của vùng nhân & bào tương.
+    Hỗ trợ vùng chọn hình chữ nhật hoặc polygon.
+    """
     data = request.json
     nucleus_path = data.get("nucleusPath")
     cytoplasm_path = data.get("cytoplasmPath")
     nucleus_selection = data.get("nucleusSelection")
     cytoplasm_selection = data.get("cytoplasmSelection")
 
-    # Strip domain if URL passed
-    if nucleus_path.startswith("http"):
-        nucleus_path = nucleus_path.replace(request.host_url, "")
-    if cytoplasm_path.startswith("http"):
-        cytoplasm_path = cytoplasm_path.replace(request.host_url, "")
-
-    # Extract filename and build absolute path
+    # Build absolute paths
     nucleus_filename = os.path.basename(nucleus_path)
     cytoplasm_filename = os.path.basename(cytoplasm_path)
     nucleus_abs = os.path.join(CH00_FOLDER, nucleus_filename)
     cytoplasm_abs = os.path.join(CH002_FOLDER, cytoplasm_filename)
 
-    # Check files exist
     if not os.path.exists(nucleus_abs):
         return jsonify({"error": f"Nucleus image not found at {nucleus_abs}"}), 400
     if not os.path.exists(cytoplasm_abs):
         return jsonify({"error": f"Cytoplasm image not found at {cytoplasm_abs}"}), 400
 
-    # Load the right image (ch002) as grayscale - this is the only image we need for whiteness calculation
-    cytoplasm_img = cv2.imread(cytoplasm_abs, cv2.IMREAD_GRAYSCALE)
-    if cytoplasm_img is None:
+    # Đọc ảnh bào tương để đo độ sáng (dùng cùng ảnh cho cả nhân & bào tương)
+    img = cv2.imread(cytoplasm_abs, cv2.IMREAD_GRAYSCALE)
+    if img is None:
         return jsonify({"error": "Failed to read cytoplasm image"}), 400
 
-    h, w = cytoplasm_img.shape
-
-    def rect_to_slice(sel):
-        x = int(sel["x"] / 100 * w)
-        y = int(sel["y"] / 100 * h)
-        width = int(sel["width"] / 100 * w)
-        height = int(sel["height"] / 100 * h)
-        return y, y + height, x, x + width
+    h, w = img.shape
 
     def polygon_to_mask(points):
-        # points are in percentages; convert to pixel coordinates
+        """Convert polygon (percent coords) thành mask binary"""
         if not points:
             return None
         pts = []
         for p in points:
-            px = int(max(0, min(100, p.get("x", 0))) / 100 * w)
-            py = int(max(0, min(100, p.get("y", 0))) / 100 * h)
+            px = int(np.clip(p.get("x", 0), 0, 100) / 100 * w)
+            py = int(np.clip(p.get("y", 0), 0, 100) / 100 * h)
             pts.append([px, py])
         if len(pts) < 3:
             return None
         mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.fillPoly(mask, [np.array(pts, dtype=np.int32)], 255)
+        cv2.fillPoly(mask, [np.array(pts, np.int32)], 255)
         return mask
 
-    def stats_from_mask(mask):
-        if mask is None:
-            return None
-        values = cytoplasm_img[mask > 0]
+    def rect_to_mask(sel):
+        """Convert rectangle (percent coords) thành mask binary"""
+        x1 = int(sel["x"] / 100 * w)
+        y1 = int(sel["y"] / 100 * h)
+        x2 = int((sel["x"] + sel["width"]) / 100 * w)
+        y2 = int((sel["y"] + sel["height"]) / 100 * h)
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
+        return mask
+
+    def measure_region(mask):
+        """Trả về trung bình độ sáng và tỉ lệ trắng trong mask"""
+        values = img[mask > 0]
         if values.size == 0:
             return None
-        avg_pixel_intensity = float(np.mean(values))
-        whiteness = float(np.mean(values)) / avg_pixel_intensity if avg_pixel_intensity > 0 else 0.0
+        mean_brightness = float(np.mean(values))
+        white_ratio = float(np.sum(values > 200)) / float(values.size)
         return {
-            "whiteness": whiteness,
-            "avg_pixel_intensity": avg_pixel_intensity,
-            "mean_grayscale": float(np.mean(values))
+            "mean_brightness": mean_brightness,
+            "white_ratio": white_ratio
         }
 
     results = {}
 
-    # Nucleus selection: supports rectangle or polygon
+    # Nucleus
     if nucleus_selection:
-        if isinstance(nucleus_selection, dict) and "points" in nucleus_selection:
-            nucleus_mask = polygon_to_mask(nucleus_selection.get("points", []))
-            s = stats_from_mask(nucleus_mask)
+        if "points" in nucleus_selection:
+            mask = polygon_to_mask(nucleus_selection["points"])
         else:
-            y1, y2, x1, x2 = rect_to_slice(nucleus_selection)
-            crop = cytoplasm_img[y1:y2, x1:x2]
-            s = None
-            if crop.size > 0:
-                avg = float(np.mean(crop))
-                s = {
-                    "whiteness": float(np.mean(crop)) / avg if avg > 0 else 0.0,
-                    "avg_pixel_intensity": avg,
-                    "mean_grayscale": float(np.mean(crop))
-                }
-        if s is not None:
-            results["nucleus_selection"] = s
+            mask = rect_to_mask(nucleus_selection)
+        if mask is not None:
+            s = measure_region(mask)
+            if s:
+                results["nucleus"] = s
 
-    # Cytoplasm selection: supports rectangle or polygon
+    # Cytoplasm
     if cytoplasm_selection:
-        if isinstance(cytoplasm_selection, dict) and "points" in cytoplasm_selection:
-            cyto_mask = polygon_to_mask(cytoplasm_selection.get("points", []))
-            s = stats_from_mask(cyto_mask)
+        if "points" in cytoplasm_selection:
+            mask = polygon_to_mask(cytoplasm_selection["points"])
         else:
-            y1, y2, x1, x2 = rect_to_slice(cytoplasm_selection)
-            crop = cytoplasm_img[y1:y2, x1:x2]
-            s = None
-            if crop.size > 0:
-                avg = float(np.mean(crop))
-                s = {
-                    "whiteness": float(np.mean(crop)) / avg if avg > 0 else 0.0,
-                    "avg_pixel_intensity": avg,
-                    "mean_grayscale": float(np.mean(crop))
-                }
-        if s is not None:
-            results["cytoplasm_selection"] = s
+            mask = rect_to_mask(cytoplasm_selection)
+        if mask is not None:
+            s = measure_region(mask)
+            if s:
+                results["cytoplasm"] = s
 
     return jsonify(results)
+@app.route('/api/track-cell-brightness', methods=['POST'])
+def track_cell_brightness():
+    """
+    Track mean & whiteness của 1 tế bào qua nhiều timepoint, export Excel.
+    """
+    import datetime
+    data = request.json
+    nucleus_contour = data.get("nucleus_contour")
+    cytoplasm_contour = data.get("cytoplasm_contour")
+    start_tp = int(data.get("start_timepoint"))
+    end_tp = int(data.get("end_timepoint"))
+
+    if not nucleus_contour or not cytoplasm_contour:
+        return jsonify({"error": "Missing contours"}), 400
+
+    cytoplasm_files = sorted(
+        [f for f in os.listdir(CH002_FOLDER) if f.lower().endswith((".png", ".tif", ".jpg"))]
+    )
+    total_tp = len(cytoplasm_files)
+
+    if start_tp < 1 or end_tp > total_tp:
+        return jsonify({"error": f"Timepoint range must be 1–{total_tp}"}), 400
+
+    def contour_to_mask(contour, shape):
+        mask = np.zeros(shape, dtype=np.uint8)
+        pts = np.array(contour, np.int32)
+        cv2.fillPoly(mask, [pts], 255)
+        return mask
+
+    results = []
+    for t in range(start_tp-1, end_tp):
+        filename = cytoplasm_files[t]
+        img_path = os.path.join(CH002_FOLDER, filename)
+        img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            continue
+
+        nucleus_mask = contour_to_mask(nucleus_contour, img.shape)
+        cytoplasm_mask = contour_to_mask(cytoplasm_contour, img.shape)
+
+        nucleus_vals = img[nucleus_mask > 0]
+        cyto_vals = img[cytoplasm_mask > 0]
+
+        def stats(values):
+            if values.size == 0:
+                return 0.0, 0.0
+            mean = float(np.mean(values))
+            white_ratio = float(np.sum(values > 200)) / float(values.size)
+            return mean, white_ratio
+
+        n_mean, n_white = stats(nucleus_vals)
+        c_mean, c_white = stats(cyto_vals)
+
+        results.append([t+1, filename, n_mean, n_white, c_mean, c_white])
+
+    # Export Excel
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Brightness Tracking"
+    ws.append([
+        "Timepoint", "Filename",
+        "Nucleus Mean Brightness", "Nucleus White Ratio",
+        "Cytoplasm Mean Brightness", "Cytoplasm White Ratio"
+    ])
+    for row in results:
+        ws.append(row)
+
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"cell_tracking_{timestamp}.xlsx"
+    filepath = os.path.join(STATIC_FOLDER, filename)
+    os.makedirs(STATIC_FOLDER, exist_ok=True)
+    wb.save(filepath)
+
+    return jsonify({"message": "done", "filename": filename})
+
+
 
 @app.route('/api/auto-track', methods=['POST'])
 def auto_track():
     """
-    Automatically track whiteness through a sequence of timepoints
+    Tự động đo độ sáng trung bình & tỉ lệ trắng của nucleus & cytoplasm qua các timepoint.
     """
-    data = request.json
-    start_timepoint = data.get("startTimepoint")
-    end_timepoint = data.get("endTimepoint")
-    nucleus_selection = data.get("nucleusSelection")
-    cytoplasm_selection = data.get("cytoplasmSelection")
-    
-    if not all([start_timepoint, end_timepoint, nucleus_selection, cytoplasm_selection]):
-        return jsonify({"error": "Missing required parameters"}), 400
-    
-    # Get all timepoints
-    image_pairs = get_image_files()
-    timepoints = list(image_pairs.keys())
-    
-    if start_timepoint >= len(timepoints) or end_timepoint >= len(timepoints):
-        return jsonify({"error": "Invalid timepoint range"}), 400
-    
-    tracking_results = []
-    
-    # Process each timepoint in the range
-    for i in range(start_timepoint, end_timepoint + 1):
-        try:
-            # Get the image pair for this timepoint
-            base_name = timepoints[i]
-            nucleus_filename = image_pairs[base_name]['nucleus']
-            cytoplasm_filename = image_pairs[base_name]['nucleus_cytoplasm']
-            
-            nucleus_abs = os.path.join(CH00_FOLDER, nucleus_filename)
-            cytoplasm_abs = os.path.join(CH002_FOLDER, cytoplasm_filename)
-            
-            if not os.path.exists(nucleus_abs) or not os.path.exists(cytoplasm_abs):
-                print(f"Warning: Missing files for timepoint {i}")
-                continue
-            
-            # Load the right image (ch002) as grayscale
-            cytoplasm_img = cv2.imread(cytoplasm_abs, cv2.IMREAD_GRAYSCALE)
-            if cytoplasm_img is None:
-                print(f"Warning: Failed to read cytoplasm image for timepoint {i}")
-                continue
-            
-            # Calculate whiteness for nucleus selection
-            h, w = cytoplasm_img.shape
-            x = int(nucleus_selection["x"] / 100 * w)
-            y = int(nucleus_selection["y"] / 100 * h)
-            width = int(nucleus_selection["width"] / 100 * w)
-            height = int(nucleus_selection["height"] / 100 * h)
-            
-            nucleus_crop = cytoplasm_img[y:y+height, x:x+width]
-            nucleus_whiteness = 0.0
-            if nucleus_crop.size > 0:
-                avg_pixel_intensity = np.mean(nucleus_crop)
-                nucleus_whiteness = float(np.mean(nucleus_crop)) / avg_pixel_intensity if avg_pixel_intensity > 0 else 0.0
-            
-            # Calculate whiteness for cytoplasm selection
-            x = int(cytoplasm_selection["x"] / 100 * w)
-            y = int(cytoplasm_selection["y"] / 100 * h)
-            width = int(cytoplasm_selection["width"] / 100 * w)
-            height = int(cytoplasm_selection["height"] / 100 * h)
-            
-            cytoplasm_crop = cytoplasm_img[y:y+height, x:x+width]
-            cytoplasm_whiteness = 0.0
-            if cytoplasm_crop.size > 0:
-                avg_pixel_intensity = np.mean(cytoplasm_crop)
-                cytoplasm_whiteness = float(np.mean(cytoplasm_crop)) / avg_pixel_intensity if avg_pixel_intensity > 0 else 0.0
-            
-            # Store results
-            tracking_results.append({
-                "timepoint": i,
-                "filename": base_name,
-                "nucleus_whiteness": nucleus_whiteness,
-                "cytoplasm_whiteness": cytoplasm_whiteness,
-                "nucleus_mean_grayscale": float(np.mean(nucleus_crop)) if nucleus_crop.size > 0 else 0.0,
-                "cytoplasm_mean_grayscale": float(np.mean(cytoplasm_crop)) if cytoplasm_crop.size > 0 else 0.0
-            })
-            
-            print(f"Processed timepoint {i}: Nucleus={nucleus_whiteness:.4f}, Cytoplasm={cytoplasm_whiteness:.4f}")
-            
-        except Exception as e:
-            print(f"Error processing timepoint {i}: {str(e)}")
-            continue
-    
-    # Create Excel file
     try:
+        data = request.json
+        nucleus_selection = data.get("nucleusSelection")
+        cytoplasm_selection = data.get("cytoplasmSelection")
+        output_filename = data.get("outputFilename", "tracking_results.xlsx")
+
+        # Kiểm tra vùng chọn
+        if not nucleus_selection or not cytoplasm_selection:
+            return jsonify({"error": "Missing nucleus or cytoplasm selection"}), 400
+
+        # Lấy danh sách ảnh timepoint (sắp xếp theo tên)
+        cytoplasm_files = sorted(
+            [f for f in os.listdir(CH002_FOLDER) if f.lower().endswith((".png", ".tif", ".jpg"))]
+        )
+        if not cytoplasm_files:
+            return jsonify({"error": "No images found in cytoplasm folder"}), 400
+
+        results = []
+
+        def measure_region_stats(crop):
+            """Tính trung bình & tỉ lệ trắng trong một vùng ảnh"""
+            if crop.size == 0:
+                return 0.0, 0.0
+            mean_brightness = float(np.mean(crop))
+            white_ratio = float(np.sum(crop > 200)) / float(crop.size)
+            return mean_brightness, white_ratio
+
+        # Lặp qua các timepoint
+        for time_idx, filename in enumerate(cytoplasm_files, start=1):
+            cytoplasm_path = os.path.join(CH002_FOLDER, filename)
+            cytoplasm_img = cv2.imread(cytoplasm_path, cv2.IMREAD_GRAYSCALE)
+            if cytoplasm_img is None:
+                print(f"[WARN] Could not read {filename}, skipping.")
+                continue
+
+            h, w = cytoplasm_img.shape
+
+            # --- Nucleus ---
+            x1 = int(nucleus_selection["x"] / 100 * w)
+            y1 = int(nucleus_selection["y"] / 100 * h)
+            x2 = x1 + int(nucleus_selection["width"] / 100 * w)
+            y2 = y1 + int(nucleus_selection["height"] / 100 * h)
+            nucleus_crop = cytoplasm_img[y1:y2, x1:x2]
+            nucleus_mean, nucleus_white_ratio = measure_region_stats(nucleus_crop)
+
+            # --- Cytoplasm ---
+            x1 = int(cytoplasm_selection["x"] / 100 * w)
+            y1 = int(cytoplasm_selection["y"] / 100 * h)
+            x2 = x1 + int(cytoplasm_selection["width"] / 100 * w)
+            y2 = y1 + int(cytoplasm_selection["height"] / 100 * h)
+            cytoplasm_crop = cytoplasm_img[y1:y2, x1:x2]
+            cytoplasm_mean, cytoplasm_white_ratio = measure_region_stats(cytoplasm_crop)
+
+            results.append([
+                time_idx, filename,
+                nucleus_mean, nucleus_white_ratio,
+                cytoplasm_mean, cytoplasm_white_ratio
+            ])
+
+        # --- Xuất ra Excel ---
+        output_path = os.path.join(STATIC_FOLDER, output_filename)
         wb = Workbook()
         ws = wb.active
-        ws.title = "Whiteness Tracking Results"
-        
-        # Add headers
+        ws.title = "Tracking Results"
+
         headers = [
-            "Timepoint", "Filename", "Nucleus Whiteness", "Cytoplasm Whiteness",
-            "Nucleus Mean Grayscale", "Cytoplasm Mean Grayscale"
+            "Timepoint", "Filename",
+            "Nucleus Mean Brightness", "Nucleus White Ratio",
+            "Cytoplasm Mean Brightness", "Cytoplasm White Ratio"
         ]
-        for col, header in enumerate(headers, 1):
-            ws.cell(row=1, column=col, value=header)
-        
-        # Add data
-        for row, result in enumerate(tracking_results, 2):
-            ws.cell(row=row, column=1, value=result["timepoint"])
-            ws.cell(row=row, column=2, value=result["filename"])
-            ws.cell(row=row, column=3, value=result["nucleus_whiteness"])
-            ws.cell(row=row, column=4, value=result["cytoplasm_whiteness"])
-            ws.cell(row=row, column=5, value=result["nucleus_mean_grayscale"])
-            ws.cell(row=row, column=6, value=result["cytoplasm_mean_grayscale"])
-        
-        # Save Excel file
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        excel_filename = f"whiteness_tracking_{start_timepoint}_to_{end_timepoint}_{timestamp}.xlsx"
-        excel_path = os.path.join("static", excel_filename)
-        
-        # Ensure static directory exists
-        os.makedirs("static", exist_ok=True)
-        
-        wb.save(excel_path)
-        
-        return jsonify({
-            "success": True,
-            "message": f"Tracking complete! Processed {len(tracking_results)} timepoints.",
-            "results": tracking_results,
-            "excel_file": excel_filename,
-            "download_url": f"/static/{excel_filename}"
-        })
-        
+        ws.append(headers)
+
+        for row in results:
+            ws.append(row)
+
+        wb.save(output_path)
+        print(f"[INFO] Tracking results saved to {output_path}")
+
+        return jsonify({"message": "Tracking completed", "file": output_filename})
+
     except Exception as e:
-        return jsonify({"error": f"Failed to create Excel file: {str(e)}"}), 500
+        print(f"[ERROR] auto_track failed: {e}")
+        return jsonify({"error": str(e)}), 500
 
-if __name__ == '__main__':
-    # Check if folders exist
-    if not os.path.exists(CH00_FOLDER):
-        print(f"Warning: {CH00_FOLDER} folder not found!")
-    if not os.path.exists(CH002_FOLDER):
-        print(f"Warning: {CH002_FOLDER} folder not found!")
-    
-    # Get initial image count
-    image_pairs = get_image_files()
-    print(f"Found {len(image_pairs)} image pairs")
-    
-    # Get port from environment variable or use default
-    port = int(os.environ.get('PORT', 5003))
-    debug = os.environ.get('FLASK_ENV') == 'development'
-    
-    app.run(debug=debug, host='0.0.0.0', port=port)
 
+@app.route('/download/<path:filename>')
+def download_file(filename):
+    return send_from_directory(STATIC_FOLDER, filename, as_attachment=True)
+
+if __name__ == "__main__":
+    app.run(debug=True)
