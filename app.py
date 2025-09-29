@@ -826,6 +826,7 @@ def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_fact
     - Bào tương = mask cytoplasm - mask nhân.
     - White ratio tính theo ngưỡng chung cho cả nhân và bào tương:
         threshold = trung bình (mean_nuc + mean_cyto) + white_ratio_factor * std_combined
+    - Tính CDK2 Activity = mean_cytoplasm / mean_nucleus.
     """
     import cv2, numpy as np, matplotlib.pyplot as plt
 
@@ -868,16 +869,22 @@ def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_fact
     combined_pixels = np.concatenate([nuc_pixels, cyto_pixels])
     std_combined = float(np.std(combined_pixels)) if combined_pixels.size > 0 else 0.0
 
-    # 7️⃣ Tính ngưỡng chung & ratio
+    # 7️⃣ Tính ngưỡng trắng & tỉ lệ pixel trắng
     white_threshold = (mean_nuc + mean_cyto) / 2 + white_ratio_factor * std_combined
     white_ratio_nuc = float(np.sum(nuc_pixels > white_threshold)) / max(nuc_pixels.size, 1)
     white_ratio_cyto = float(np.sum(cyto_pixels > white_threshold)) / max(cyto_pixels.size, 1)
 
-    # 8️⃣ Debug
+    # 8️⃣ Tính CDK2 Activity (mean_cytoplasm / mean_nucleus)
+    if mean_nuc > 0:
+        cdk2_activity = mean_cyto / mean_nuc
+    else:
+        cdk2_activity = 0.0
+
+    # 9️⃣ Debug
     if debug:
-        print(f"[DEBUG] Image dtype: {I.dtype}, min={I.min()}, max={I.max()}")
-        print(f"[DEBUG] mean_nuc={mean_nuc:.2f}, mean_cyto={mean_cyto:.2f}, threshold={white_threshold:.2f}")
-        print(f"[DEBUG] white_ratio_nuc={white_ratio_nuc:.3f}, white_ratio_cyto={white_ratio_cyto:.3f}")
+        print(f"[DEBUG] mean_nuc={mean_nuc:.2f}, mean_cyto={mean_cyto:.2f}")
+        print(f"[DEBUG] threshold={white_threshold:.2f}, white_ratio_nuc={white_ratio_nuc:.3f}, white_ratio_cyto={white_ratio_cyto:.3f}")
+        print(f"[DEBUG] CDK2 activity={cdk2_activity:.3f}")
 
         fig, axes = plt.subplots(1, 3, figsize=(12,4))
         axes[0].imshow(I, cmap='gray'); axes[0].set_title('Original Image (scaled)')
@@ -889,7 +896,8 @@ def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_fact
         'mean_nucleus': mean_nuc,
         'mean_cytoplasm': mean_cyto,
         'white_ratio_nucleus': white_ratio_nuc,
-        'white_ratio_cytoplasm': white_ratio_cyto
+        'white_ratio_cytoplasm': white_ratio_cyto,
+        'cdk2_activity': cdk2_activity
     }
 
 
@@ -967,7 +975,8 @@ def track_cell_brightness():
             results.append([
                 time_idx, filename,
                 stats['mean_nucleus'], stats['white_ratio_nucleus'],
-                stats['mean_cytoplasm'], stats['white_ratio_cytoplasm']
+                stats['mean_cytoplasm'], stats['white_ratio_cytoplasm'],
+                stats['cdk2_activity']
             ])
 
         # --- Xuất Excel ---
@@ -979,7 +988,7 @@ def track_cell_brightness():
         headers = [
             "Timepoint", "Filename",
             "Nucleus Mean Brightness", "Nucleus White Ratio",
-            "Cytoplasm Mean Brightness", "Cytoplasm White Ratio"
+            "Cytoplasm Mean Brightness", "Cytoplasm White Ratio", "CDK2 Activity"
         ]
         ws.append(headers)
         for row in results:
