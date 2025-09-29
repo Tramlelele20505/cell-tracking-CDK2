@@ -907,6 +907,50 @@
 
 
     <script>
+        // =================== UPLOAD / CLEAR HANDLING ===================
+        async function clearUploads() {
+            if (!confirm('Are you sure you want to delete all uploaded images? This cannot be undone.')) return;
+            try {
+                const res = await fetch('/clear-uploads', { method: 'POST' });
+                if (res.redirected) {
+                    // The endpoint redirects back to index; reload page to reflect changes
+                    window.location = res.url;
+                    return;
+                }
+                // If not redirected, just refresh the status
+                await refreshUploadStatus();
+                alert('All uploaded files have been cleared.');
+            } catch (err) {
+                console.error('Clear uploads failed:', err);
+                alert('Failed to clear uploads: ' + err.message);
+            }
+        }
+
+        async function refreshUploadStatus() {
+            try {
+                const resp = await fetch('/api/upload-stats');
+                const data = await resp.json();
+                const statusText = document.getElementById('upload-status-text');
+                const totalPairs = data.pairs || 0;
+                const ch00 = data.ch00_count || 0;
+                const ch002 = data.ch002_count || 0;
+                if (ch00 === 0 && ch002 === 0) {
+                    statusText.textContent = 'No image folders uploaded yet. Upload folders containing images for both channels to start analysis.';
+                } else {
+                    statusText.textContent = `ch00: ${ch00} images, ch002: ${ch002} images — Paired: ${totalPairs} file pairs`;
+                }
+
+                // update file-count badges if present
+                const badge = document.querySelector('.file-count');
+                if (badge) {
+                    badge.textContent = `${ch00 + ch002}`;
+                    if (ch00 + ch002 === 0) badge.classList.add('no-files'); else badge.classList.remove('no-files');
+                }
+            } catch (err) {
+                console.error('Failed to load upload stats:', err);
+            }
+        }
+
         let trackingResults = [];
         let currentTimepoint = null;
         let allTimepoints = [];
@@ -1272,9 +1316,33 @@
             document.getElementById('nucleus-timepoint').textContent = `File ${timepoint + 1}`;
             document.getElementById('cytoplasm-timepoint').textContent = `File ${timepoint + 1}`;
 
+            // Update edge navigation buttons
+            const total = allTimepoints.length || 0;
+            const prevBtn = document.getElementById('edge-prev-btn');
+            const nextBtn = document.getElementById('edge-next-btn');
+            if (prevBtn) prevBtn.disabled = (timepoint <= 0);
+            if (nextBtn) nextBtn.disabled = (timepoint >= total - 1);
+
             document.getElementById('image-display').style.display = 'block';
             hideLoading();
 
+            // After images load, if contours are confirmed, redraw overlays on the new images
+            const nucImg = document.getElementById('nucleus-image');
+            const cytoImg = document.getElementById('cytoplasm-image');
+
+            // Wait for cytoplasm image to load natural dimensions
+            cytoImg.onload = () => {
+                // If nucleus contour exists, draw it on nucleus overlay
+                if (confirmedNucleusContour) {
+                    showContourOverlay('nucleus', confirmedNucleusContour);
+                }
+                // If cytoplasm contour exists, render both contours on cytoplasm panel
+                if (confirmedNucleusContour || confirmedCytoplasmContour) {
+                    renderCytoplasmOverlay();
+                }
+            };
+
+            // Continue tracking if active
             if (isTracking && confirmedContour) {
                 measureBothWhiteness(true);
             }
@@ -1286,10 +1354,12 @@
             if (!startValue) return;
 
             showLoading();
-            currentTimepoint = parseInt(startValue);
+            // Dropdown values are 1-based; convert to 0-based index for /api/cells-by-timepoint
+            const idx = parseInt(startValue) - 1;
+            currentTimepoint = idx;
 
             try {
-                const response = await fetch(`/api/cells-by-timepoint/${startValue}`);
+                const response = await fetch(`/api/cells-by-timepoint/${idx}`);
                 const data = await response.json();
 
                 if (response.ok && data.cells.length > 0) {
@@ -1305,10 +1375,48 @@
             }
         }
 
+        async function loadTimepointIndex(idx) {
+            if (idx < 0) return;
+            showLoading();
+            try {
+                const response = await fetch(`/api/cells-by-timepoint/${idx}`);
+                const data = await response.json();
+                if (response.ok && data.cells.length > 0) {
+                    const cell = data.cells[0];
+                    currentTimepoint = idx;
+                    displayAlignedImages(cell.nucleus.path, cell.nucleus_cytoplasm.path, currentTimepoint);
+                    currentFilename = cell.nucleus.filename;
+                    currentCytoplasmFilename = cell.nucleus_cytoplasm.filename;
+                } else {
+                    showError(`No cells found for timepoint ${idx + 1}`);
+                }
+            } catch (err) {
+                showError('Network error: ' + err.message);
+            }
+        }
+
+        function nextTimepoint() {
+            const total = allTimepoints.length;
+            if (currentTimepoint == null) return;
+            const nextIdx = currentTimepoint + 1;
+            if (nextIdx >= total) return;
+            loadTimepointIndex(nextIdx);
+        }
+
+        function previousTimepoint() {
+            if (currentTimepoint == null) return;
+            const prevIdx = currentTimepoint - 1;
+            if (prevIdx < 0) return;
+            loadTimepointIndex(prevIdx);
+        }
+
         // =================== PAGE LOAD ===================
         window.onload = function () {
             loadTimepoints();
-            updateUploadStatus();
+            // refreshUploadStatus updates counts from /api/upload-stats
+            if (typeof refreshUploadStatus === 'function') refreshUploadStatus();
+            // keep legacy updater for detailed cell info as well
+            if (typeof updateUploadStatus === 'function') updateUploadStatus();
         };
         function setNucleusSelectionMode() {
             isNucleusSelectionMode = true;
@@ -1392,8 +1500,10 @@
                     // Thêm các option từ API
                     allTimepoints.forEach((timepoint, idx) => {
                         const label = `File ${idx + 1} of ${allTimepoints.length}`;
-                        const opt1 = new Option(label, timepoint);
-                        const opt2 = new Option(label, timepoint);
+                        // server API expects 1-based timepoint indices; use idx+1 as the value
+                        const value = idx + 1;
+                        const opt1 = new Option(label, value);
+                        const opt2 = new Option(label, value);
                         startSelect.add(opt1);
                         endSelect.add(opt2);
                     });
