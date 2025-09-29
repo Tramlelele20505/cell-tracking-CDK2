@@ -102,15 +102,27 @@ def get_image_files():
                 'nucleus': ch00_file,
                 'nucleus_cytoplasm': ch002_file
             }
-
-    # If no pairs (or very few) were found, fall back to index-based pairing
-    if len(image_pairs) == 0 and ch00_files and ch002_files:
-        print("No filename matches across channels. Falling back to index-based pairing.")
-        num_pairs = min(len(ch00_files), len(ch002_files))
-        for i in range(num_pairs):
+    # If pairing is incomplete (filenames differ across channels), fall back to index-based
+    # pairing for the remaining files so we still pair images by sequence order.
+    max_possible = min(len(ch00_files), len(ch002_files))
+    if len(image_pairs) < max_possible and ch00_files and ch002_files:
+        print("Filename pairing incomplete. Applying index-based pairing for remaining files.")
+        for i in range(max_possible):
             ch00_file = ch00_files[i]
             ch002_file = ch002_files[i]
-            base_name = f"pair_{i:05d}"
+
+            # Prefer existing exact-base_name if present
+            base_name = os.path.splitext(ch00_file)[0]
+            # Skip if this ch00 has already been paired by exact match
+            if base_name in image_pairs:
+                continue
+
+            # Also skip if ch002_file already used
+            already_used = any(p['nucleus_cytoplasm'] == ch002_file for p in image_pairs.values())
+            if already_used:
+                continue
+
+            # Add index-based pair using ch00's base name
             image_pairs[base_name] = {
                 'nucleus': ch00_file,
                 'nucleus_cytoplasm': ch002_file
@@ -178,6 +190,14 @@ def index():
     Main page with upload interface and random cell selection
     """
     return render_template('index.html')
+
+
+@app.route('/whiteness')
+def whiteness_index():
+    """
+    Whiteness measurement single-page app
+    """
+    return render_template('whiteness_cdk2_index.html')
 
 @app.route('/upload', methods=['GET', 'POST'])
 def upload_files():
@@ -273,13 +293,19 @@ def clear_uploads():
     Clear all uploaded files
     """
     try:
-        # Remove all files from upload folders
+        # Recursively remove all contents from upload folders but keep folders themselves
         for folder in [CH00_FOLDER, CH002_FOLDER]:
             if os.path.exists(folder):
-                for filename in os.listdir(folder):
-                    file_path = os.path.join(folder, filename)
-                    if os.path.isfile(file_path):
-                        os.unlink(file_path)
+                for entry in os.listdir(folder):
+                    path = os.path.join(folder, entry)
+                    try:
+                        if os.path.isfile(path) or os.path.islink(path):
+                            os.unlink(path)
+                        elif os.path.isdir(path):
+                            shutil.rmtree(path)
+                    except Exception:
+                        # best-effort: skip problematic files
+                        pass
         
         flash('All uploaded files have been cleared')
     except Exception as e:
@@ -730,26 +756,29 @@ def serve_ch00_image(filename):
         image_path = os.path.join(CH00_FOLDER, filename)
         if not os.path.exists(image_path):
             return "Image not found", 404
-        
+
         # Read image with OpenCV
         img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             return "Failed to load image", 500
-        
+
         # Normalize and enhance for better visibility
         img_normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
-        
+
         # Apply slight contrast enhancement
         img_enhanced = cv2.convertScaleAbs(img_normalized, alpha=1.2, beta=10)
-        
+
         # Convert to JPEG
         _, buffer = cv2.imencode('.jpg', img_enhanced, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        
+
         # Create response
         response = Response(buffer.tobytes(), mimetype='image/jpeg')
-        response.headers['Cache-Control'] = 'public, max-age=31536000'
+        # Avoid long client-side caching during development so uploads/clears show immediately
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
         return response
-        
+
     except Exception as e:
         print(f"Error serving ch00 image {filename}: {e}")
         return "Error processing image", 500
@@ -764,26 +793,29 @@ def serve_ch002_image(filename):
         image_path = os.path.join(CH002_FOLDER, filename)
         if not os.path.exists(image_path):
             return "Image not found", 404
-        
+
         # Read image with OpenCV
         img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             return "Failed to load image", 500
-        
+
         # Normalize and enhance for better visibility
         img_normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
-        
+
         # Apply slight contrast enhancement
         img_enhanced = cv2.convertScaleAbs(img_normalized, alpha=1.2, beta=10)
-        
+
         # Convert to JPEG
         _, buffer = cv2.imencode('.jpg', img_enhanced, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        
+
         # Create response
         response = Response(buffer.tobytes(), mimetype='image/jpeg')
-        response.headers['Cache-Control'] = 'public, max-age=31536000'
+        # Avoid long client-side caching during development so uploads/clears show immediately
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
         return response
-        
+
     except Exception as e:
         print(f"Error serving ch002 image {filename}: {e}")
         return "Error processing image", 500
@@ -1002,7 +1034,8 @@ def track_cell_brightness():
     os.makedirs(STATIC_FOLDER, exist_ok=True)
     wb.save(filepath)
 
-    return jsonify({"message": "done", "filename": filename})
+    # Return 'file' to match frontend expectation (/download/<file>)
+    return jsonify({"message": "done", "file": filename})
 
 
 
