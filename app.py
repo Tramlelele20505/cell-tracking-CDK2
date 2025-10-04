@@ -440,7 +440,7 @@ def get_cells_by_timepoint(timepoint):
 
 def segment_cytoplasm_from_nucleus(cytoplasm_img_path, nucleus_mask,
                                    denoise_h=10,
-                                   dilate_px=3,        # dilate nhân 5-10 px
+                                   dilate_px=3,        # dilate nhân 3 px
                                    bright_thresh=30,
                                    dark_thresh=20,
                                    dark_region_ratio=0.1):
@@ -465,11 +465,11 @@ def segment_cytoplasm_from_nucleus(cytoplasm_img_path, nucleus_mask,
 
     h, w = img.shape
 
-    # 2️⃣ Dilate nhân 5–10 px để seed lớn hơn nhân
+    # 2️⃣ Dilate nhân 3 px để seed lớn hơn nhân
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
     dilated_nucleus = cv2.dilate(nucleus_mask, kernel, iterations=dilate_px)
 
-    # 3️⃣ Gán toàn bộ vùng nhân + dilate là sáng (255)
+    # 3️⃣ Gán toàn bộ vùng nhân + dilate là sáng (255)    
     blur[dilated_nucleus > 0] = 255
 
     # 4️⃣ Region growing
@@ -654,13 +654,6 @@ def segment_nuclei(image_path, min_area=50):
             centroids.append((cx, cy))
 
     return mask_filled, valid_contours, centroids
-
-
-
-
-
-
-
 
 def select_nucleus_at_point(image_path, click_x, click_y):
     """
@@ -871,8 +864,8 @@ def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_fact
 
     # 7️⃣ Tính ngưỡng trắng & tỉ lệ pixel trắng
     white_threshold = (mean_nuc + mean_cyto) / 2 + white_ratio_factor * std_combined
-    white_ratio_nuc = float(np.sum(nuc_pixels > white_threshold)) / max(nuc_pixels.size, 1)
-    white_ratio_cyto = float(np.sum(cyto_pixels > white_threshold)) / max(cyto_pixels.size, 1)
+    #white_ratio_nuc = float(np.sum(nuc_pixels > white_threshold)) / max(nuc_pixels.size, 1)
+    #white_ratio_cyto = float(np.sum(cyto_pixels > white_threshold)) / max(cyto_pixels.size, 1)
 
     # 8️⃣ Tính CDK2 Activity (mean_cytoplasm / mean_nucleus)
     if mean_nuc > 0:
@@ -883,7 +876,7 @@ def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_fact
     # 9️⃣ Debug
     if debug:
         print(f"[DEBUG] mean_nuc={mean_nuc:.2f}, mean_cyto={mean_cyto:.2f}")
-        print(f"[DEBUG] threshold={white_threshold:.2f}, white_ratio_nuc={white_ratio_nuc:.3f}, white_ratio_cyto={white_ratio_cyto:.3f}")
+        print(f"[DEBUG] threshold={white_threshold:.2f}")
         print(f"[DEBUG] CDK2 activity={cdk2_activity:.3f}")
 
         fig, axes = plt.subplots(1, 3, figsize=(12,4))
@@ -895,8 +888,8 @@ def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_fact
     return {
         'mean_nucleus': mean_nuc,
         'mean_cytoplasm': mean_cyto,
-        'white_ratio_nucleus': white_ratio_nuc,
-        'white_ratio_cytoplasm': white_ratio_cyto,
+        #'white_ratio_nucleus': white_ratio_nuc,
+        #'white_ratio_cytoplasm': white_ratio_cyto,
         'cdk2_activity': cdk2_activity
     }
 
@@ -974,8 +967,8 @@ def track_cell_brightness():
 
             results.append([
                 time_idx, filename,
-                stats['mean_nucleus'], stats['white_ratio_nucleus'],
-                stats['mean_cytoplasm'], stats['white_ratio_cytoplasm'],
+                stats['mean_nucleus'], #stats['white_ratio_nucleus'],
+                stats['mean_cytoplasm'], #stats['white_ratio_cytoplasm'],
                 stats['cdk2_activity']
             ])
 
@@ -987,8 +980,9 @@ def track_cell_brightness():
         ws.title = "Tracking Results"
         headers = [
             "Timepoint", "Filename",
-            "Nucleus Mean Brightness", "Nucleus White Ratio",
-            "Cytoplasm Mean Brightness", "Cytoplasm White Ratio", "CDK2 Activity"
+            "Nucleus Mean Brightness", #"Nucleus White Ratio",
+            "Cytoplasm Mean Brightness", #"Cytoplasm White Ratio", 
+            "CDK2 Activity"
         ]
         ws.append(headers)
         for row in results:
