@@ -438,17 +438,19 @@ def get_cells_by_timepoint(timepoint):
         })
 
 
-def segment_cytoplasm_from_nucleus(cytoplasm_img_path, nucleus_mask,
-                                   denoise_h=10,
-                                   dilate_px=3,        # dilate nhân 3 px
-                                   bright_thresh=30,
-                                   dark_thresh=20,
-                                   dark_region_ratio=0.1):
+def segment_cytoplasm_from_nucleus(
+    cytoplasm_img_path, 
+    nucleus_mask,
+    denoise_h=10,
+    dilate_px=3,          # dilate nhân 5–10 px
+    bright_thresh=30,
+    dark_thresh=20,
+    dark_region_ratio=0.1
+):
     """
-    Segment cytoplasm quanh nucleus bằng region growing có kiểm tra hố tối.
-    Nhân được dilate và coi là vùng sáng để region growing luôn bao quanh nhân.
-    Sau khi tìm mask, lùi vào khoảng 3 pixel để tránh lan ra nền tối.
-    Trả về final_mask (uint8 0/255).
+    Segment cytoplasm quanh nucleus bằng region growing.
+    Sau đó giãn thêm từ nhân theo diện tích, khoảng 5–22 px,
+    tạo mask bào tương mới và lấy giao với mask bào tương gốc.
     """
     import cv2
     import numpy as np
@@ -460,24 +462,20 @@ def segment_cytoplasm_from_nucleus(cytoplasm_img_path, nucleus_mask,
 
     blur = cv2.fastNlMeansDenoising(img, None, h=denoise_h,
                                     templateWindowSize=7, searchWindowSize=21)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     blur = clahe.apply(blur)
-
     h, w = img.shape
 
-    # 2️⃣ Dilate nhân 3 px để seed lớn hơn nhân
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+    # 2️⃣ Dilate nhân 5–10 px để seed lớn hơn nhân
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     dilated_nucleus = cv2.dilate(nucleus_mask, kernel, iterations=dilate_px)
-
-    # 3️⃣ Gán toàn bộ vùng nhân + dilate là sáng (255)    
     blur[dilated_nucleus > 0] = 255
 
-    # 4️⃣ Region growing
+    # 3️⃣ Region growing
     visited = np.zeros_like(img, dtype=np.uint8)
     mask = np.zeros_like(img, dtype=np.uint8)
-
     seed_pts = np.column_stack(np.where(dilated_nucleus > 0))
-    stack = [tuple(pt[::-1]) for pt in seed_pts]  # (x, y)
+    stack = [tuple(pt[::-1]) for pt in seed_pts]
 
     while stack:
         x, y = stack.pop()
@@ -486,55 +484,64 @@ def segment_cytoplasm_from_nucleus(cytoplasm_img_path, nucleus_mask,
         if visited[y, x]:
             continue
         visited[y, x] = 1
-
         val = blur[y, x]
 
         if val >= bright_thresh:  # cytoplasm sáng
             mask[y, x] = 255
-            for dx in [-1,0,1]:
-                for dy in [-1,0,1]:
-                    if dx == 0 and dy == 0:
+            for dx in [-1, 0, 1]:
+                for dy in [-1, 0, 1]:
+                    if dx == 0 and dy == 0: 
                         continue
-                    stack.append((x+dx, y+dy))
-
+                    stack.append((x + dx, y + dy))
         elif val <= dark_thresh:
-            # kiểm tra hố tối
-            neigh = blur[max(0,y-2):min(h,y+3), max(0,x-2):min(w,x+3)]
+            neigh = blur[max(0, y-2):min(h, y+3), max(0, x-2):min(w, x+3)]
             dark_ratio = np.mean(neigh < dark_thresh)
-            if dark_ratio < dark_region_ratio:  # chỉ là nhiễu
+            if dark_ratio < dark_region_ratio:
                 mask[y, x] = 255
-                for dx in [-1,0,1]:
-                    for dy in [-1,0,1]:
-                        if dx == 0 and dy == 0:
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        if dx == 0 and dy == 0: 
                             continue
-                        stack.append((x+dx, y+dy))
+                        stack.append((x + dx, y + dy))
 
-    # 5️⃣ Hậu xử lý
+    # 4️⃣ Hậu xử lý & lấy contour lớn nhất
     clean = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=3)
     clean = cv2.morphologyEx(clean, cv2.MORPH_OPEN, kernel, iterations=1)
-
-    # Lấy contour lớn nhất
     contours, _ = cv2.findContours(clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
-
     max_cnt = max(contours, key=cv2.contourArea)
-    final_mask = np.zeros_like(img, dtype=np.uint8)
-    cv2.drawContours(final_mask, [max_cnt], -1, 255, -1)
+    cytoplasm_mask = np.zeros_like(img, dtype=np.uint8)
+    cv2.drawContours(cytoplasm_mask, [max_cnt], -1, 255, -1)
 
-    # 6️⃣ Lùi mask vào khoảng 3 pixel để tránh viền lan ra nền
-    erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
-    final_mask = cv2.erode(final_mask, erode_kernel, iterations=1)
+    erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    cytoplasm_mask = cv2.erode(cytoplasm_mask, erode_kernel, iterations=1)
 
-    # 7️⃣ Làm mềm biên
-    blurred = cv2.GaussianBlur(final_mask, (5,5), 0)
+    # 5️⃣ Giãn từ nhân theo diện tích, dựa trên 1/4 diện tích ảnh
+    nucleus_area = np.sum(nucleus_mask > 0)
+    img_area = img.shape[0] * img.shape[1]
+
+    min_expand_px = 5
+    max_expand_px = 22
+
+    scale_factor = np.sqrt(nucleus_area / float(img_area))
+    expand_px = int(min_expand_px + (max_expand_px - min_expand_px) * scale_factor)
+    expand_px = max(min_expand_px, min(expand_px, max_expand_px))
+
+    dist_map = cv2.distanceTransform(255 - nucleus_mask, cv2.DIST_L2, 5)
+    expanded_mask = (dist_map <= expand_px).astype(np.uint8) * 255
+
+    # 6️⃣ Lấy giao với mask bào tương gốc
+    final_mask = cv2.bitwise_and(cytoplasm_mask, expanded_mask)
+
+    # 7️⃣ Làm mềm viền
+    blurred = cv2.GaussianBlur(final_mask, (5, 5), 0)
     _, final_mask = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY)
 
+    # 8️⃣ Gộp lại với nhân
+    final_mask = cv2.bitwise_or(final_mask, nucleus_mask)
+
     return final_mask
-
-
-
-
 
 
 @app.route('/api/select-cytoplasm', methods=['POST'])
