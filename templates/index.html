@@ -725,7 +725,9 @@
                 </div>
                 <div class="upload-buttons">
                     <a href="/upload" class="btn-upload">📁 Upload Folders</a>
-                    <button onclick="clearUploads()" class="btn-clear">🗑️ Clear All</button>
+                    <form action="/clear-uploads" method="post" style="display:inline;">
+                        <button type="submit" class="btn-clear">🗑️ Clear All</button>
+                    </form>
                 </div>
             </div>
         </div>
