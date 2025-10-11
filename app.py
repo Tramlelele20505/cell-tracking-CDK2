@@ -26,11 +26,12 @@ import shutil
 import base64 # For encoding/decoding base64 images
 from flask import send_from_directory
 import os
+import torch #pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 
 
 
-
+print("CUDA available:", torch.cuda.is_available())
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Change this in production
@@ -438,110 +439,50 @@ def get_cells_by_timepoint(timepoint):
         })
 
 
-def segment_cytoplasm_from_nucleus(
-    cytoplasm_img_path, 
-    nucleus_mask,
-    denoise_h=10,
-    dilate_px=3,          # dilate nhân 5–10 px
-    bright_thresh=30,
-    dark_thresh=20,
-    dark_region_ratio=0.1
-):
+def segment_cytoplasm_from_nucleus(cytoplasm_img_path, nucleus_mask):
     """
-    Segment cytoplasm quanh nucleus bằng region growing.
-    Sau đó giãn thêm từ nhân theo diện tích, khoảng 5–22 px,
-    tạo mask bào tương mới và lấy giao với mask bào tương gốc.
+    Use Cellpose to segment full cells (cytoplasm + nucleus),
+    then find the region corresponding to the given nucleus.
     """
     import cv2
     import numpy as np
+    from cellpose import models
+    
+    USE_GPU = torch.cuda.is_available()
 
-    # 1️⃣ Đọc ảnh & khử nhiễu
-    img = cv2.imread(cytoplasm_img_path, cv2.IMREAD_GRAYSCALE)
+    img = cv2.imread(cytoplasm_img_path)
     if img is None:
         return None
 
-    blur = cv2.fastNlMeansDenoising(img, None, h=denoise_h,
-                                    templateWindowSize=7, searchWindowSize=21)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    blur = clahe.apply(blur)
-    h, w = img.shape
+    model = models.CellposeModel(model_type='cyto', gpu=USE_GPU)
+    masks, flows, styles = model.eval([img], channels=[0,0], diameter=None)
+    mask = masks[0].astype(np.uint8)
 
-    # 2️⃣ Dilate nhân 5–10 px để seed lớn hơn nhân
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    dilated_nucleus = cv2.dilate(nucleus_mask, kernel, iterations=dilate_px)
-    blur[dilated_nucleus > 0] = 255
-
-    # 3️⃣ Region growing
-    visited = np.zeros_like(img, dtype=np.uint8)
-    mask = np.zeros_like(img, dtype=np.uint8)
-    seed_pts = np.column_stack(np.where(dilated_nucleus > 0))
-    stack = [tuple(pt[::-1]) for pt in seed_pts]
-
-    while stack:
-        x, y = stack.pop()
-        if not (0 <= x < w and 0 <= y < h):
-            continue
-        if visited[y, x]:
-            continue
-        visited[y, x] = 1
-        val = blur[y, x]
-
-        if val >= bright_thresh:  # cytoplasm sáng
-            mask[y, x] = 255
-            for dx in [-1, 0, 1]:
-                for dy in [-1, 0, 1]:
-                    if dx == 0 and dy == 0: 
-                        continue
-                    stack.append((x + dx, y + dy))
-        elif val <= dark_thresh:
-            neigh = blur[max(0, y-2):min(h, y+3), max(0, x-2):min(w, x+3)]
-            dark_ratio = np.mean(neigh < dark_thresh)
-            if dark_ratio < dark_region_ratio:
-                mask[y, x] = 255
-                for dx in [-1, 0, 1]:
-                    for dy in [-1, 0, 1]:
-                        if dx == 0 and dy == 0: 
-                            continue
-                        stack.append((x + dx, y + dy))
-
-    # 4️⃣ Hậu xử lý & lấy contour lớn nhất
-    clean = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=3)
-    clean = cv2.morphologyEx(clean, cv2.MORPH_OPEN, kernel, iterations=1)
-    contours, _ = cv2.findContours(clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
+    if mask.max() == 0:
+        print("No cells detected by Cellpose.")
         return None
-    max_cnt = max(contours, key=cv2.contourArea)
-    cytoplasm_mask = np.zeros_like(img, dtype=np.uint8)
-    cv2.drawContours(cytoplasm_mask, [max_cnt], -1, 255, -1)
 
-    erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    cytoplasm_mask = cv2.erode(cytoplasm_mask, erode_kernel, iterations=1)
+    M = cv2.moments(nucleus_mask)
+    if M["m00"] == 0:
+        print("Invalid nucleus mask (no area).")
+        return None
+    cx = int(M["m10"] / M["m00"])
+    cy = int(M["m01"] / M["m00"])
 
-    # 5️⃣ Giãn từ nhân theo diện tích, dựa trên 1/4 diện tích ảnh
-    nucleus_area = np.sum(nucleus_mask > 0)
-    img_area = img.shape[0] * img.shape[1]
+    cell_id = int(mask[cy, cx])
+    if cell_id == 0:
+        print("No cell found at nucleus centroid.")
+        return None
 
-    min_expand_px = 5
-    max_expand_px = 22
+    cell_mask = np.where(mask == cell_id, 255, 0).astype(np.uint8)
 
-    scale_factor = np.sqrt(nucleus_area / float(img_area))
-    expand_px = int(min_expand_px + (max_expand_px - min_expand_px) * scale_factor)
-    expand_px = max(min_expand_px, min(expand_px, max_expand_px))
+    
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    cell_mask = cv2.morphologyEx(cell_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    cell_mask = cv2.morphologyEx(cell_mask, cv2.MORPH_OPEN, kernel, iterations=1)
 
-    dist_map = cv2.distanceTransform(255 - nucleus_mask, cv2.DIST_L2, 5)
-    expanded_mask = (dist_map <= expand_px).astype(np.uint8) * 255
+    return cell_mask
 
-    # 6️⃣ Lấy giao với mask bào tương gốc
-    final_mask = cv2.bitwise_and(cytoplasm_mask, expanded_mask)
-
-    # 7️⃣ Làm mềm viền
-    blurred = cv2.GaussianBlur(final_mask, (5, 5), 0)
-    _, final_mask = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY)
-
-    # 8️⃣ Gộp lại với nhân
-    final_mask = cv2.bitwise_or(final_mask, nucleus_mask)
-
-    return final_mask
 
 
 @app.route('/api/select-cytoplasm', methods=['POST'])
@@ -624,43 +565,46 @@ def fill_inner_holes(mask, gray_img, circularity_thresh=0.6, area_ratio_thresh=0
     return mask_filled
 
 
-def segment_nuclei(image_path, min_area=50):
+def segment_nuclei(image_path, model_type='nuclei', min_area=50):
     import cv2
     import numpy as np
+    from cellpose import models
+    
+    USE_GPU = torch.cuda.is_available()
 
-    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    img = cv2.imread(image_path)
     if img is None:
         return None, [], []
 
-    # 1️⃣ Tăng tương phản
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-    enhanced = clahe.apply(img)
+    model = models.CellposeModel(model_type=model_type, gpu=USE_GPU)
+    masks, flows, styles = model.eval([img], channels=[0,0], diameter=None)
+    mask = masks[0].astype(np.uint8)
 
-    # 2️⃣ Ngưỡng hóa (Otsu)
-    _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    valid_contours = []
+    centroids = []
 
-    # 3️⃣ Morphology nhẹ để loại nhiễu
-    kernel = np.ones((3,3), np.uint8)
-    mask = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    for label in np.unique(mask):
+        if label == 0:# Skip background
+            continue  
 
-    # 4️⃣ Lấp lỗ trong nhân (truyền enhanced để phân biệt lỗ thật / rãnh)
-    mask_filled = fill_inner_holes(mask, enhanced)
+        # Create binary mask for the current object
+        binary_mask = (mask == label).astype(np.uint8) * 255
 
-    # 5️⃣ Lấy contours & centroid
-    contours, _ = cv2.findContours(mask_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    valid_contours, centroids = [], []
-    for cnt in contours:
-        if cv2.contourArea(cnt) < min_area:
-            continue
-        valid_contours.append(cnt)
-        M = cv2.moments(cnt)
-        if M["m00"] > 0:
-            cx = int(M["m10"]/M["m00"])
-            cy = int(M["m01"]/M["m00"])
-            centroids.append((cx, cy))
+        # Find contours
+        cnts, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for cnt in cnts:
+            if cv2.contourArea(cnt) < min_area:
+                continue
+            valid_contours.append(cnt)
 
-    return mask_filled, valid_contours, centroids
+            # Compute centroid
+            M = cv2.moments(cnt)
+            if M["m00"] > 0:
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+                centroids.append((cx, cy))
+
+    return mask, valid_contours, centroids
 
 def select_nucleus_at_point(image_path, click_x, click_y):
     """
@@ -744,13 +688,13 @@ def serve_ch00_image(filename):
             return "Failed to load image", 500
         
         # Normalize and enhance for better visibility
-        img_normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
+        #img_normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
         
         # Apply slight contrast enhancement
-        img_enhanced = cv2.convertScaleAbs(img_normalized, alpha=1.2, beta=10)
+        #img_enhanced = cv2.convertScaleAbs(img_normalized, alpha=1.2, beta=10)
         
         # Convert to JPEG
-        _, buffer = cv2.imencode('.jpg', img_enhanced, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 90])
         
         # Create response
         response = Response(buffer.tobytes(), mimetype='image/jpeg')
@@ -778,13 +722,13 @@ def serve_ch002_image(filename):
             return "Failed to load image", 500
         
         # Normalize and enhance for better visibility
-        img_normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
+        #img_normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
         
         # Apply slight contrast enhancement
-        img_enhanced = cv2.convertScaleAbs(img_normalized, alpha=1.2, beta=10)
+        #img_enhanced = cv2.convertScaleAbs(img_normalized, alpha=1.2, beta=10)
         
         # Convert to JPEG
-        _, buffer = cv2.imencode('.jpg', img_enhanced, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 90])
         
         # Create response
         response = Response(buffer.tobytes(), mimetype='image/jpeg')
@@ -899,8 +843,6 @@ def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_fact
         #'white_ratio_cytoplasm': white_ratio_cyto,
         'cdk2_activity': cdk2_activity
     }
-
-
 
 
 @app.route('/api/track-cell-brightness', methods=['POST'])
