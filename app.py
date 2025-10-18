@@ -458,8 +458,6 @@ def segment_cytoplasm_from_nucleus(cytoplasm_img_path, nucleus_mask):
     img = cv2.imread(cytoplasm_img_path)
     if img is None:
         return None
-    
-    #cytop_img=rgb_to_grayscale(img)
 
     model = get_cyto_model()
     eval_kwargs = {
@@ -587,9 +585,9 @@ def segment_nuclei(image_path, model_type='nuclei', min_area=50, diameter = None
     
     eval_kwargs = {
         'diameter': diameter,
-        'channels': [0, 0],  # Single channel (nuclei only)
-        'flow_threshold': 0.4,  # Permissive for low contrast
-        'cellprob_threshold': 0,  # Very sensitive
+        'channels': [0, 0],  
+        'flow_threshold': 0.4,  
+        'cellprob_threshold': 0,  
         'resample': True,
         'normalize': True,
     }
