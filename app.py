@@ -3,6 +3,7 @@
 Cell Image Viewer Web Application
  
  Supports uploading cell nucleus images and corresponding nucleus+cytoplasm images
+ run:C:/Users/HP/AppData/Local/Programs/Python/Python311/python.exe "d:/HCMUT/Nam 3/ky 1/DATH/code/Tranleenew1/cell-tracking-CDK2/app.py"
 """
 
 from flask import Flask, render_template, jsonify, request, send_from_directory, Response, flash, redirect, url_for
@@ -26,12 +27,13 @@ import shutil
 import base64 # For encoding/decoding base64 images
 from flask import send_from_directory
 import os
-import torch #pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+import torch 
+import base64
+from cellpose.models import CellposeModel #version: 2.3.2
 
-
-
-
-print("CUDA available:", torch.cuda.is_available())
+_cyto_model_cache = None
+os.environ['OMP_NUM_THREADS'] = '6'
+os.environ['MKL_NUM_THREADS'] = '6'
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Change this in production
@@ -42,6 +44,15 @@ CH00_FOLDER = os.path.join(UPLOAD_FOLDER, "ch00")  # Nucleus only images
 CH002_FOLDER = os.path.join(UPLOAD_FOLDER, "ch002")  # Nucleus + cytoplasm images
 STATIC_FOLDER = "static"
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024  # 2 GB max upload size
+
+def get_cyto_model():
+    """Load and cache Cellpose cyto2 model for CPU."""
+    global _cyto_model_cache
+    
+    if _cyto_model_cache is None:
+            _cyto_model_cache = CellposeModel(model_type="cyto2", gpu=False)
+      
+    return _cyto_model_cache
 
 # Create folders if they don't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -438,25 +449,30 @@ def get_cells_by_timepoint(timepoint):
             'cells': []
         })
 
-
 def segment_cytoplasm_from_nucleus(cytoplasm_img_path, nucleus_mask):
     """
     Use Cellpose to segment full cells (cytoplasm + nucleus),
     then find the region corresponding to the given nucleus.
     """
-    import cv2
-    import numpy as np
-    from cellpose import models
-    
-    USE_GPU = torch.cuda.is_available()
 
     img = cv2.imread(cytoplasm_img_path)
     if img is None:
         return None
+    
+    #cytop_img=rgb_to_grayscale(img)
 
-    model = models.CellposeModel(model_type='cyto', gpu=USE_GPU)
-    masks, flows, styles = model.eval([img], channels=[0,0], diameter=None)
-    mask = masks[0].astype(np.uint8)
+    model = get_cyto_model()
+    eval_kwargs = {
+        'diameter': None,
+        'flow_threshold': 0.9,
+        'cellprob_threshold': -2,
+        'resample': True,
+        'normalize': True,
+        'interp': True,
+    }
+    
+    result = model.eval(img, **eval_kwargs)
+    mask = result[0].astype(np.uint8)
 
     if mask.max() == 0:
         print("No cells detected by Cellpose.")
@@ -565,20 +581,27 @@ def fill_inner_holes(mask, gray_img, circularity_thresh=0.6, area_ratio_thresh=0
     return mask_filled
 
 
-def segment_nuclei(image_path, model_type='nuclei', min_area=50):
-    import cv2
-    import numpy as np
-    from cellpose import models
+def segment_nuclei(image_path, model_type='nuclei', min_area=50, diameter = None):
     
-    USE_GPU = torch.cuda.is_available()
+    model = get_cyto_model()
+    
+    eval_kwargs = {
+        'diameter': diameter,
+        'channels': [0, 0],  # Single channel (nuclei only)
+        'flow_threshold': 0.4,  # Permissive for low contrast
+        'cellprob_threshold': 0,  # Very sensitive
+        'resample': True,
+        'normalize': True,
+    }
 
     img = cv2.imread(image_path)
     if img is None:
         return None, [], []
+    
+    #nuc_img=rgb_to_grayscale(img)
 
-    model = models.CellposeModel(model_type=model_type, gpu=USE_GPU)
-    masks, flows, styles = model.eval([img], channels=[0,0], diameter=None)
-    mask = masks[0].astype(np.uint8)
+    result = model.eval(img, **eval_kwargs)
+    mask = result[0].astype(np.uint8)
 
     valid_contours = []
     centroids = []
