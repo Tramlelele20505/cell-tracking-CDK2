@@ -30,6 +30,11 @@ import os
 import torch 
 import base64
 from cellpose.models import CellposeModel #version: 2.3.2
+from scipy import ndimage as ndi
+from skimage.morphology import disk
+from skimage.filters import median as sk_median
+from scipy.ndimage import binary_dilation, binary_erosion
+from skimage import exposure
 
 _cyto_model_cache = None
 os.environ['OMP_NUM_THREADS'] = '6'
@@ -451,56 +456,64 @@ def get_cells_by_timepoint(timepoint):
 
 def segment_cytoplasm_from_nucleus(cytoplasm_img_path, nucleus_mask):
     """
-    Use Cellpose to segment full cells (cytoplasm + nucleus),
-    then find the region corresponding to the given nucleus.
-    """
+    Use Cellpose to segment full cells (cytoplasm + nucleus).
+    Modified to match dual_model preprocessing behavior.
 
-    img = cv2.imread(cytoplasm_img_path)
+    Args:
+        cytoplasm_img_path: Path to cytoplasm image
+        nucleus_mask: Binary mask (0/255) of selected nucleus
+    """
+    # Load cytoplasm image as grayscale
+    img = cv2.imread(cytoplasm_img_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         return None
+
+    img_2ch = np.stack([img, nucleus_mask], axis=-1)
 
     model = get_cyto_model()
     eval_kwargs = {
         'diameter': None,
-        'flow_threshold': 0.9,
-        'cellprob_threshold': -2,
+        'flow_threshold': 0.4,
+        'cellprob_threshold': 0,
         'resample': True,
         'normalize': True,
         'interp': True,
     }
-    
-    result = model.eval(img, **eval_kwargs)
+
+    result = model.eval(img_2ch, **eval_kwargs)
     mask = result[0].astype(np.uint8)
 
     if mask.max() == 0:
         print("No cells detected by Cellpose.")
         return None
 
+    # Get the nucleus centroid
     M = cv2.moments(nucleus_mask)
-    if M["m00"] == 0:
+    if M['m00'] == 0:
         print("Invalid nucleus mask (no area).")
         return None
-    cx = int(M["m10"] / M["m00"])
-    cy = int(M["m01"] / M["m00"])
 
+    cx = int(M['m10'] / M['m00'])
+    cy = int(M['m01'] / M['m00'])
+
+    # Find which cell contains the nucleus
     cell_id = int(mask[cy, cx])
     if cell_id == 0:
         print("No cell found at nucleus centroid.")
         return None
 
+    # Extract just that cell
     cell_mask = np.where(mask == cell_id, 255, 0).astype(np.uint8)
 
-    
+    # Clean up mask
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     cell_mask = cv2.morphologyEx(cell_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
     cell_mask = cv2.morphologyEx(cell_mask, cv2.MORPH_OPEN, kernel, iterations=1)
-
     return cell_mask
-
-
 
 @app.route('/api/select-cytoplasm', methods=['POST'])
 def select_cytoplasm():
+    
     data = request.json
     image_filename = data.get("image_filename")
     nucleus_contour = data.get("nucleus_contour")
@@ -540,7 +553,43 @@ def select_cytoplasm():
 
     return jsonify({"cytoplasm_contour": cyto_contour})
 
+def preprocess_image(gray, bg_sigma=25, median_radius=2, denoise_sigma=0.8, clahe_clip=0.03):
+    """Preprocess image: BG subtraction, median filter, gaussian smoothing, CLAHE."""
+    # Background subtraction
+    bg = ndi.gaussian_filter(gray, sigma=bg_sigma)
+    sub = gray - bg
+    sub = np.clip(sub, 0, None)
+    if sub.max() > 0:
+        sub = sub / sub.max()
+    
+    # Median filter + gaussian smoothing
+    den = sk_median(sub, disk(median_radius))
+    den = ndi.gaussian_filter(den, sigma=denoise_sigma)
+    
+    # CLAHE for contrast enhancement
+    deneq = exposure.equalize_adapthist(den, clip_limit=clahe_clip)
+    return deneq
 
+def shrink_masks_aggressive(masks, erosion_iterations=3):
+    """
+    Aggressively erode masks to fit tightly to nuclei.
+    No dilation recovery - keeps masks smaller.
+    """
+    print(f"[INFO] Applying aggressive erosion ({erosion_iterations} iterations)...")
+    masks_shrunk = np.zeros_like(masks)
+    for nucleus_id in np.unique(masks):
+        if nucleus_id == 0:
+            continue
+        nucleus_mask = (masks == nucleus_id).astype(np.uint8)
+        # Pure erosion - no dilation back
+        shrunk = nucleus_mask.astype(bool)
+        for _ in range(erosion_iterations):
+            shrunk = binary_erosion(shrunk)
+        if shrunk.sum() > 0:  # Only keep if nuclei remains
+            masks_shrunk[shrunk] = nucleus_id
+    n_nuclei_kept = masks_shrunk.max()
+    print(f"[INFO] After erosion: {n_nuclei_kept} nuclei (smaller, tighter masks)")
+    return masks_shrunk
 
 def fill_inner_holes(mask, gray_img, circularity_thresh=0.6, area_ratio_thresh=0.3, elongation_thresh=3.0):
     """
@@ -578,51 +627,56 @@ def fill_inner_holes(mask, gray_img, circularity_thresh=0.6, area_ratio_thresh=0
 
     return mask_filled
 
-
-def segment_nuclei(image_path, model_type='nuclei', min_area=50, diameter = None):
-    
+def segment_nuclei(image_path, model_type='nuclei', min_area=50, diameter=None):
+    """
+    Segment nuclei from image using Cellpose.
+    Modified to match dual_model preprocessing behavior.
+    """
     model = get_cyto_model()
-    
     eval_kwargs = {
-        'diameter': diameter,
-        'channels': [0, 0],  
-        'flow_threshold': 0.4,  
-        'cellprob_threshold': 0,  
-        'resample': True,
-        'normalize': True,
+        'diameter': 35,
+        'channels': [0, 0],
+        'flow_threshold': 0.4,
+        'cellprob_threshold': -2.5,
+        'min_size': 200
     }
 
-    img = cv2.imread(image_path)
+    # Load image as grayscale
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         return None, [], []
     
-    #nuc_img=rgb_to_grayscale(img)
+    img_float = img.astype(np.float32)
+    if img_float.max() > 1:
+        img_float = img_float / 255.0
+    
+    img_processed = preprocess_image(img_float, bg_sigma=8, median_radius=2, denoise_sigma=0.8, clahe_clip=0.03)
 
-    result = model.eval(img, **eval_kwargs)
+    # Evaluate with scaled image
+    result = model.eval(img_processed, **eval_kwargs)
     mask = result[0].astype(np.uint8)
+    
+    mask = shrink_masks_aggressive(mask, erosion_iterations=6)
 
     valid_contours = []
     centroids = []
 
     for label in np.unique(mask):
-        if label == 0:# Skip background
-            continue  
+        if label == 0:  # Skip background
+            continue
 
-        # Create binary mask for the current object
         binary_mask = (mask == label).astype(np.uint8) * 255
-
-        # Find contours
         cnts, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
         for cnt in cnts:
             if cv2.contourArea(cnt) < min_area:
                 continue
             valid_contours.append(cnt)
 
-            # Compute centroid
             M = cv2.moments(cnt)
-            if M["m00"] > 0:
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
+            if M['m00'] > 0:
+                cx = int(M['m10'] / M['m00'])
+                cy = int(M['m01'] / M['m00'])
                 centroids.append((cx, cy))
 
     return mask, valid_contours, centroids
@@ -652,6 +706,7 @@ def select_nucleus_at_point(image_path, click_x, click_y):
         return None, None, None
 
     return selected_mask, selected_contour, selected_centroid
+
 @app.route('/api/select-nucleus', methods=['POST'])
 def select_nucleus():
     """
@@ -780,9 +835,6 @@ def view_specific_cell(base_name):
                          nucleus_cytoplasm=pair['nucleus_cytoplasm'],
                          nucleus_info=nucleus_info,
                          cytoplasm_info=cytoplasm_info)
-
-
-
 
 def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_factor=0.5, debug=False):
     """
