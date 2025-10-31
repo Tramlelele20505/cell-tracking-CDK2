@@ -1,4 +1,4 @@
-<!DOCTYPE html>
++<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -701,6 +701,34 @@
                 padding: 12px 20px;
             }
         }
+        .btrack-panel {
+            padding: 20px;
+            margin: 0 20px 20px 20px;
+            background: #eef1ff;
+            border-radius: 12px;
+            text-align: center;a
+            border: 1px solid #d8deff;
+        }
+
+        .btrack-panel h3 {
+            color: #4a4a68;
+            margin-bottom: 8px;
+        }
+
+        .btrack-panel p {
+            color: #6a6a82;
+            margin-bottom: 15px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .status-message {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 8px;
+            display: none; /* Ẩn ban đầu */
+        }
     </style>    
 </head>
 
@@ -731,6 +759,7 @@
                 </div>
             </div>
         </div>
+        
 
         <div class="controls">
             <div class="timepoint-controls">
@@ -777,23 +806,15 @@
                             </select>
                         </div>
 
-                        <div class="tracking-buttons" style="margin-top:8px;">
-                            <button class="btn btn-warning" onclick="startBrightnessTracking()" id="auto-track-btn">
-                                🎯 Start Auto-Tracking
+                        <div class="btrack-panel">
+                            <h3>🚀 Full Image Cell Tracking (BTrack)</h3>
+                            <p>This will segment and track all cells in all nucleus images.</p>
+                            <button class="btn btn-success" id="run-btrack-btn" onclick="runBtrack()">
+                                Run BTrack Analysis
                             </button>
-                            <button class="btn btn-secondary" onclick="exportToExcel()">📄 Export to Excel</button>
-                        </div>
-
-                        <div id="tracking-progress" style="display: none;">
-                            <div class="progress-bar">
-                                <div class="progress-fill" id="progress-fill"></div>
-                            </div>
-                            <p id="tracking-status">Processing...</p>
+                            <div id="btrack-status" class="status-message"></div>
                         </div>
                     </div>
-                </div>
-            </div>
-        </div>
 
 
         <div class="content">
@@ -1450,6 +1471,54 @@
             alert('❌ Lỗi khi tracking. Kiểm tra console để xem chi tiết.');
         }
     }
+    async function runBtrack() {
+    const statusEl = document.getElementById('btrack-status');
+    const buttonEl = document.getElementById('run-btrack-btn');
+
+    // ✅ Lấy giá trị start và end từ dropdown
+    const start = parseInt(document.getElementById('start-timepoint-select').value);
+    const end = parseInt(document.getElementById('end-timepoint-select').value);
+
+    if (isNaN(start) || isNaN(end) || start < 0 || end < start) {
+        alert("❌ Vui lòng chọn khoảng file hợp lệ (VD: File 1 → File 10).");
+        return;
+    }
+
+    // Cập nhật giao diện để báo quá trình đang chạy
+    statusEl.innerHTML = `
+        <div class="spinner"></div>
+        <p><strong>Processing...</strong> This can take several minutes depending on the number of images. Please do not close this window.</p>
+    `;
+    statusEl.style.display = 'block';
+    buttonEl.disabled = true;
+
+    try {
+        const response = await fetch('/api/run-btrack', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ start_timepoint: start, end_timepoint: end })
+        });
+        const data = await response.json();
+
+        if (!response.ok || data.error) {
+            throw new Error(data.error || `Server error: ${response.status}`);
+        }
+
+        // Hiển thị link tải file khi thành công
+        statusEl.innerHTML = `
+            <p style="color: green; font-weight: bold;">✅ ${data.message}</p>
+            <a href="/download/${encodeURIComponent(data.file)}" class="btn-upload" download>
+                📄 Download ${data.file}
+            </a>
+        `;
+
+    } catch (error) {
+        console.error('BTrack Error:', error);
+        statusEl.innerHTML = `<p style="color: red; font-weight: bold;">❌ Error: ${error.message}</p>`;
+    } finally {
+        buttonEl.disabled = false;
+    }
+}
 
 
     </script>

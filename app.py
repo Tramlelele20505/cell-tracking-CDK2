@@ -3,7 +3,6 @@
 Cell Image Viewer Web Application
  
  Supports uploading cell nucleus images and corresponding nucleus+cytoplasm images
- run:C:/Users/HP/AppData/Local/Programs/Python/Python311/python.exe "d:/HCMUT/Nam 3/ky 1/DATH/code/Tranleenew1/cell-tracking-CDK2/app.py"
 """
 
 from flask import Flask, render_template, jsonify, request, send_from_directory, Response, flash, redirect, url_for
@@ -50,6 +49,11 @@ CH002_FOLDER = os.path.join(UPLOAD_FOLDER, "ch002")  # Nucleus + cytoplasm image
 STATIC_FOLDER = "static"
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024  # 2 GB max upload size
 
+# Create folders if they don't exist
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(CH00_FOLDER, exist_ok=True)
+os.makedirs(CH002_FOLDER, exist_ok=True)
+os.makedirs(STATIC_FOLDER, exist_ok=True)
 def get_cyto_model():
     """Load and cache Cellpose cyto2 model for CPU."""
     global _cyto_model_cache
@@ -58,12 +62,6 @@ def get_cyto_model():
             _cyto_model_cache = CellposeModel(model_type="cyto2", gpu=False)
       
     return _cyto_model_cache
-
-# Create folders if they don't exist
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(CH00_FOLDER, exist_ok=True)
-os.makedirs(CH002_FOLDER, exist_ok=True)
-os.makedirs(STATIC_FOLDER, exist_ok=True)
 
 # Allowed file extensions
 ALLOWED_EXTENSIONS = {'tif', 'tiff', 'jpg', 'jpeg', 'png', 'bmp'}
@@ -454,62 +452,112 @@ def get_cells_by_timepoint(timepoint):
             'cells': []
         })
 
-def segment_cytoplasm_from_nucleus(cytoplasm_img_path, nucleus_mask):
-    """
-    Use Cellpose to segment full cells (cytoplasm + nucleus).
-    Modified to match dual_model preprocessing behavior.
 
-    Args:
-        cytoplasm_img_path: Path to cytoplasm image
-        nucleus_mask: Binary mask (0/255) of selected nucleus
+def segment_cytoplasm_from_nucleus(
+    cytoplasm_img_path, 
+    nucleus_mask,
+    denoise_h=10,
+    dilate_px=3,          # dilate nhân 5–10 px
+    bright_thresh=30,
+    dark_thresh=20,
+    dark_region_ratio=0.1
+):
     """
-    # Load cytoplasm image as grayscale
+    Segment cytoplasm quanh nucleus bằng region growing.
+    Sau đó giãn thêm từ nhân theo diện tích, khoảng 5–22 px,
+    tạo mask bào tương mới và lấy giao với mask bào tương gốc.
+    """
+    import cv2
+    import numpy as np
+
+    # 1️⃣ Đọc ảnh & khử nhiễu
     img = cv2.imread(cytoplasm_img_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         return None
 
-    img_2ch = np.stack([img, nucleus_mask], axis=-1)
+    blur = cv2.fastNlMeansDenoising(img, None, h=denoise_h,
+                                    templateWindowSize=7, searchWindowSize=21)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    blur = clahe.apply(blur)
+    h, w = img.shape
 
-    model = get_cyto_model()
-    eval_kwargs = {
-        'diameter': None,
-        'flow_threshold': 0.4,
-        'cellprob_threshold': 0,
-        'resample': True,
-        'normalize': True,
-        'interp': True,
-    }
-
-    result = model.eval(img_2ch, **eval_kwargs)
-    mask = result[0].astype(np.uint8)
-
-    if mask.max() == 0:
-        print("No cells detected by Cellpose.")
-        return None
-
-    # Get the nucleus centroid
-    M = cv2.moments(nucleus_mask)
-    if M['m00'] == 0:
-        print("Invalid nucleus mask (no area).")
-        return None
-
-    cx = int(M['m10'] / M['m00'])
-    cy = int(M['m01'] / M['m00'])
-
-    # Find which cell contains the nucleus
-    cell_id = int(mask[cy, cx])
-    if cell_id == 0:
-        print("No cell found at nucleus centroid.")
-        return None
-
-    # Extract just that cell
-    cell_mask = np.where(mask == cell_id, 255, 0).astype(np.uint8)
-
-    # Clean up mask
+    # 2️⃣ Dilate nhân 5–10 px để seed lớn hơn nhân
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    cell_mask = cv2.morphologyEx(cell_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-    cell_mask = cv2.morphologyEx(cell_mask, cv2.MORPH_OPEN, kernel, iterations=1)
-    return cell_mask
+    dilated_nucleus = cv2.dilate(nucleus_mask, kernel, iterations=dilate_px)
+    blur[dilated_nucleus > 0] = 255
+
+    # 3️⃣ Region growing
+    visited = np.zeros_like(img, dtype=np.uint8)
+    mask = np.zeros_like(img, dtype=np.uint8)
+    seed_pts = np.column_stack(np.where(dilated_nucleus > 0))
+    stack = [tuple(pt[::-1]) for pt in seed_pts]
+
+    while stack:
+        x, y = stack.pop()
+        if not (0 <= x < w and 0 <= y < h):
+            continue
+        if visited[y, x]:
+            continue
+        visited[y, x] = 1
+        val = blur[y, x]
+
+        if val >= bright_thresh:  # cytoplasm sáng
+            mask[y, x] = 255
+            for dx in [-1, 0, 1]:
+                for dy in [-1, 0, 1]:
+                    if dx == 0 and dy == 0: 
+                        continue
+                    stack.append((x + dx, y + dy))
+        elif val <= dark_thresh:
+            neigh = blur[max(0, y-2):min(h, y+3), max(0, x-2):min(w, x+3)]
+            dark_ratio = np.mean(neigh < dark_thresh)
+            if dark_ratio < dark_region_ratio:
+                mask[y, x] = 255
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        if dx == 0 and dy == 0: 
+                            continue
+                        stack.append((x + dx, y + dy))
+
+    # 4️⃣ Hậu xử lý & lấy contour lớn nhất
+    clean = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=3)
+    clean = cv2.morphologyEx(clean, cv2.MORPH_OPEN, kernel, iterations=1)
+    contours, _ = cv2.findContours(clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    max_cnt = max(contours, key=cv2.contourArea)
+    cytoplasm_mask = np.zeros_like(img, dtype=np.uint8)
+    cv2.drawContours(cytoplasm_mask, [max_cnt], -1, 255, -1)
+
+    erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    cytoplasm_mask = cv2.erode(cytoplasm_mask, erode_kernel, iterations=3)
+
+    # 5️⃣ Giãn từ nhân theo diện tích, dựa trên 1/4 diện tích ảnh
+    nucleus_area = np.sum(nucleus_mask > 0)
+    img_area = img.shape[0] * img.shape[1]
+
+    min_expand_px = 5
+    max_expand_px = 22
+
+    scale_factor = np.sqrt(nucleus_area / float(img_area))
+    expand_px = int(min_expand_px + (max_expand_px - min_expand_px) * scale_factor)
+    expand_px = max(min_expand_px, min(expand_px, max_expand_px))
+
+    dist_map = cv2.distanceTransform(255 - nucleus_mask, cv2.DIST_L2, 5)
+    expanded_mask = (dist_map <= expand_px).astype(np.uint8) * 255
+
+    # 6️⃣ Lấy giao với mask bào tương gốc
+    final_mask = cv2.bitwise_and(cytoplasm_mask, expanded_mask)
+
+    # 7️⃣ Làm mềm viền
+    blurred = cv2.GaussianBlur(final_mask, (5, 5), 0)
+    _, final_mask = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY)
+
+    # 8️⃣ Gộp lại với nhân
+    final_mask = cv2.bitwise_or(final_mask, nucleus_mask)
+
+    return final_mask
+
 
 @app.route('/api/select-cytoplasm', methods=['POST'])
 def select_cytoplasm():
@@ -706,7 +754,6 @@ def select_nucleus_at_point(image_path, click_x, click_y):
         return None, None, None
 
     return selected_mask, selected_contour, selected_centroid
-
 @app.route('/api/select-nucleus', methods=['POST'])
 def select_nucleus():
     """
@@ -835,6 +882,9 @@ def view_specific_cell(base_name):
                          nucleus_cytoplasm=pair['nucleus_cytoplasm'],
                          nucleus_info=nucleus_info,
                          cytoplasm_info=cytoplasm_info)
+
+
+
 
 def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_factor=0.5, debug=False):
     """
@@ -1017,6 +1067,106 @@ def track_cell_brightness():
         print(f"[ERROR] track_cell_brightness failed: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+
+import btrack
+import pandas as pd
+import json
+
+@app.route('/api/run-btrack', methods=['POST'])
+def run_btrack_analysis():
+    """
+    API endpoint to run segmentation and tracking on a subset of nucleus images (ch00),
+    based on start and end timepoints.
+    """
+    try:
+        data = request.get_json() or {}
+        start = int(data.get('start_timepoint', 0))  # mặc định 0 nếu không truyền
+        end = data.get('end_timepoint', None)
+
+        # --- 1. Get the sorted list of nucleus images ---
+        nucleus_files = sorted(
+            [f for f in os.listdir(CH00_FOLDER) if allowed_file(f)],
+            key=natural_sort_key
+        )
+        if not nucleus_files:
+            return jsonify({'error': 'No nucleus (ch00) images found to track.'}), 404
+
+        # --- 2. Validate start & end ---
+        if end is None:
+            end = len(nucleus_files) - 1
+        if start < 0 or end >= len(nucleus_files) or start > end:
+            return jsonify({'error': 'Invalid start or end timepoint.'}), 400
+
+        # Lọc danh sách file theo khoảng start → end
+        nucleus_files = nucleus_files[start:end+1]
+
+        # --- 3. Run segmentation and COLLECT 2D masks into a list ---
+        all_masks_list = []  # Initialize a list to store all 2D masks
+        print(f"Starting segmentation for BTrack on frames {start+1} → {end+1}...")
+
+        for frame_idx, filename in enumerate(nucleus_files):
+            print(f"  - Segmenting frame {frame_idx+start+1}/{end+1}: {filename}")
+            image_path = os.path.join(CH00_FOLDER, filename)
+            
+            # This function returns a 2D mask
+            mask, _, _ = segment_nuclei(image_path, min_area=50)
+
+            if mask is None:
+                # If an image fails, append an empty mask to maintain the time sequence
+                if all_masks_list:
+                    h, w = all_masks_list[-1].shape
+                    all_masks_list.append(np.zeros((h, w), dtype=np.uint16))
+                continue
+
+            # Add the 2D mask to our list
+            all_masks_list.append(mask.astype(np.uint16))
+
+        if not all_masks_list:
+            return jsonify({'error': 'Segmentation did not produce any masks.'}), 500
+
+        # --- 4. Stack masks and convert to BTrack objects ---
+        segmentation_stack = np.stack(all_masks_list, axis=0)
+        all_objects = btrack.utils.segmentation_to_objects(
+            segmentation_stack, 
+            properties=('area', 'major_axis_length')
+        )
+        
+        if not all_objects:
+             return jsonify({'error': 'Segmentation did not find any cells to track.'}), 500
+        
+        # --- 5. Configure and run the BTrack Tracker ---
+        with btrack.BayesianTracker() as tracker:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            config_path = os.path.join(script_dir, 'config.json')
+            tracker.configure_from_file(config_path)
+            
+            tracker.append(all_objects)
+
+            first_img = cv2.imread(os.path.join(CH00_FOLDER, nucleus_files[0]))
+            tracker.volume = ((0, first_img.shape[1]), (0, first_img.shape[0]), (-1e5, 1e5))
+            
+            tracker.track(step_size=100)
+            tracker.optimize()
+            
+            # --- 6. Export results ---
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            output_filename = f"btrack_results_{timestamp}.h5"
+            output_path = os.path.join(STATIC_FOLDER, output_filename)
+            tracker.export(output_path, obj_type='obj_type_cells')
+
+            print(f"BTrack analysis complete. Results saved to {output_filename}")
+            
+            return jsonify({
+                'message': f'BTrack analysis successful. Found {len(tracker.tracks)} tracks.',
+                'file': output_filename
+            })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[BTRACK ERROR] {str(e)}")
+        return jsonify({'error': f'An error occurred during BTrack analysis: {str(e)}'}), 500
 
 
 
