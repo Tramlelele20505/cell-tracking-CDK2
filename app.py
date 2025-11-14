@@ -5,7 +5,8 @@ Cell Image Viewer Web Application
  Supports uploading cell nucleus images and corresponding nucleus+cytoplasm images
 """
 
-from flask import Flask, render_template, jsonify, request, send_from_directory, Response, flash, redirect, url_for
+from flask import Flask, render_template, jsonify, request,send_file, send_from_directory, Response, flash, redirect, url_for
+
 from werkzeug.utils import secure_filename
 import os
 import random
@@ -618,7 +619,7 @@ def preprocess_image(gray, bg_sigma=25, median_radius=2, denoise_sigma=0.8, clah
     deneq = exposure.equalize_adapthist(den, clip_limit=clahe_clip)
     return deneq
 
-def shrink_masks_aggressive(masks, erosion_iterations=3):
+def shrink_masks_aggressive(masks, erosion_iterations=4):
     """
     Aggressively erode masks to fit tightly to nuclei.
     No dilation recovery - keeps masks smaller.
@@ -1073,101 +1074,238 @@ import btrack
 import pandas as pd
 import json
 
+def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_factor=0.5, debug=False):
+    """
+    Đo độ sáng trung bình & tỉ lệ pixel sáng trong nhân và bào tương.
+    - Tự động scale ảnh về 8-bit nếu ảnh gốc là 16-bit hoặc float với giá trị >255.
+    - Bào tương = mask cytoplasm - mask nhân.
+    - White ratio tính theo ngưỡng chung cho cả nhân và bào tương:
+        threshold = trung bình (mean_nuc + mean_cyto) + white_ratio_factor * std_combined
+    - Tính CDK2 Activity = mean_cytoplasm / mean_nucleus.
+    """
+    import cv2, numpy as np, matplotlib.pyplot as plt
+
+    # 1️⃣ Đọc ảnh
+    I = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+    if I is None:
+        raise FileNotFoundError(f"Cannot read image: {image_path}")
+
+    # 2️⃣ Scale ảnh về 0-255 nếu cần
+    if np.issubdtype(I.dtype, np.floating):
+        max_val = I.max()
+        if max_val > 0:
+            I = (I / max_val * 255).astype(np.float32)
+        else:
+            I = I.astype(np.float32)
+    elif I.dtype == np.uint16:
+        I = (I / 65535 * 255).astype(np.float32)
+    else:
+        I = I.astype(np.float32)
+
+    # 3️⃣ Convert mask sang boolean
+    if nucleus_mask is None or cell_mask is None:
+        raise ValueError("nucleus_mask or cell_mask is None")
+    nuc_mask = (np.array(nucleus_mask) > 0)
+    cell_mask_bin = (np.array(cell_mask) > 0)
+
+    # 4️⃣ Mask bào tương = cell - nucleus
+    cyto_mask = cell_mask_bin & (~nuc_mask)
+
+    # 5️⃣ Lấy pixel trong mask
+    nuc_pixels = I[nuc_mask]
+    cyto_pixels = I[cyto_mask]
+
+    if nuc_pixels.size == 0 or cyto_pixels.size == 0:
+        print("[WARN] Empty mask detected.")
+
+    # 6️⃣ Tính mean & std
+    mean_nuc = float(np.mean(nuc_pixels)) if nuc_pixels.size > 0 else 0.0
+    mean_cyto = float(np.mean(cyto_pixels)) if cyto_pixels.size > 0 else 0.0
+    combined_pixels = np.concatenate([nuc_pixels, cyto_pixels])
+    std_combined = float(np.std(combined_pixels)) if combined_pixels.size > 0 else 0.0
+
+    # 7️⃣ Tính ngưỡng trắng & tỉ lệ pixel trắng
+    white_threshold = (mean_nuc + mean_cyto) / 2 + white_ratio_factor * std_combined
+    #white_ratio_nuc = float(np.sum(nuc_pixels > white_threshold)) / max(nuc_pixels.size, 1)
+    #white_ratio_cyto = float(np.sum(cyto_pixels > white_threshold)) / max(cyto_pixels.size, 1)
+
+    # 8️⃣ Tính CDK2 Activity (mean_cytoplasm / mean_nucleus)
+    if mean_nuc > 0:
+        cdk2_activity = mean_cyto / mean_nuc
+    else:
+        cdk2_activity = 0.0
+
+    # 9️⃣ Debug
+    if debug:
+        print(f"[DEBUG] mean_nuc={mean_nuc:.2f}, mean_cyto={mean_cyto:.2f}")
+        print(f"[DEBUG] threshold={white_threshold:.2f}")
+        print(f"[DEBUG] CDK2 activity={cdk2_activity:.3f}")
+
+        fig, axes = plt.subplots(1, 3, figsize=(12,4))
+        axes[0].imshow(I, cmap='gray'); axes[0].set_title('Original Image (scaled)')
+        axes[1].imshow(nuc_mask, cmap='gray'); axes[1].set_title('Nucleus Mask')
+        axes[2].imshow(cyto_mask, cmap='gray'); axes[2].set_title('Cytoplasm Mask')
+        plt.show()
+
+    return {
+        'mean_nucleus': mean_nuc,
+        'mean_cytoplasm': mean_cyto,
+        #'white_ratio_nucleus': white_ratio_nuc,
+        #'white_ratio_cytoplasm': white_ratio_cyto,
+        'cdk2_activity': cdk2_activity
+    }
+
+
 @app.route('/api/run-btrack', methods=['POST'])
 def run_btrack_analysis():
-    """
-    API endpoint to run segmentation and tracking on a subset of nucleus images (ch00),
-    based on start and end timepoints.
-    """
     try:
-        data = request.get_json() or {}
-        start = int(data.get('start_timepoint', 0))  # mặc định 0 nếu không truyền
-        end = data.get('end_timepoint', None)
+        data = request.json or {}
+        click_x = data.get("click_x")
+        click_y = data.get("click_y")
+        image_filename = data.get("image_filename")
+        start = int(data.get("start_timepoint", 0))
+        end = data.get("end_timepoint", None)
 
-        # --- 1. Get the sorted list of nucleus images ---
-        nucleus_files = sorted(
-            [f for f in os.listdir(CH00_FOLDER) if allowed_file(f)],
-            key=natural_sort_key
-        )
+        if click_x is None or click_y is None or not image_filename:
+            return {"error": "Missing click_x, click_y or image_filename"}, 400
+
+        # --- Load CH00 images ---
+        nucleus_files = sorted([f for f in os.listdir(CH00_FOLDER) if allowed_file(f)],
+                               key=natural_sort_key)
         if not nucleus_files:
-            return jsonify({'error': 'No nucleus (ch00) images found to track.'}), 404
+            return {"error": "No CH00 images found"}, 404
 
-        # --- 2. Validate start & end ---
+        try:
+            first_frame_index = nucleus_files.index(image_filename)
+        except ValueError:
+            return {"error": "image_filename not found"}, 404
+
         if end is None:
             end = len(nucleus_files) - 1
-        if start < 0 or end >= len(nucleus_files) or start > end:
-            return jsonify({'error': 'Invalid start or end timepoint.'}), 400
 
-        # Lọc danh sách file theo khoảng start → end
-        nucleus_files = nucleus_files[start:end+1]
+        used_files = nucleus_files[start:end + 1]
 
-        # --- 3. Run segmentation and COLLECT 2D masks into a list ---
-        all_masks_list = []  # Initialize a list to store all 2D masks
-        print(f"Starting segmentation for BTrack on frames {start+1} → {end+1}...")
-
-        for frame_idx, filename in enumerate(nucleus_files):
-            print(f"  - Segmenting frame {frame_idx+start+1}/{end+1}: {filename}")
-            image_path = os.path.join(CH00_FOLDER, filename)
-            
-            # This function returns a 2D mask
-            mask, _, _ = segment_nuclei(image_path, min_area=50)
+        # --- Segment nuclei ---
+        all_masks = []
+        for fname in used_files:
+            imgpath = os.path.join(CH00_FOLDER, fname)
+            mask, _, _ = segment_nuclei(imgpath, min_area=50)
 
             if mask is None:
-                # If an image fails, append an empty mask to maintain the time sequence
-                if all_masks_list:
-                    h, w = all_masks_list[-1].shape
-                    all_masks_list.append(np.zeros((h, w), dtype=np.uint16))
+                # Nếu không segment được thì tạo mask 0
+                h, w = all_masks[-1].shape if all_masks else (512, 512)
+                all_masks.append(np.zeros((h, w), dtype=np.uint16))
                 continue
 
-            # Add the 2D mask to our list
-            all_masks_list.append(mask.astype(np.uint16))
+            all_masks.append(mask.astype(np.uint16))
 
-        if not all_masks_list:
-            return jsonify({'error': 'Segmentation did not produce any masks.'}), 500
+        segmentation_stack = np.stack(all_masks, axis=0)
 
-        # --- 4. Stack masks and convert to BTrack objects ---
-        segmentation_stack = np.stack(all_masks_list, axis=0)
+        # --- Run BTrack ---
         all_objects = btrack.utils.segmentation_to_objects(
-            segmentation_stack, 
-            properties=('area', 'major_axis_length')
+            segmentation_stack, properties=("area", "major_axis_length")
         )
-        
-        if not all_objects:
-             return jsonify({'error': 'Segmentation did not find any cells to track.'}), 500
-        
-        # --- 5. Configure and run the BTrack Tracker ---
+
         with btrack.BayesianTracker() as tracker:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            config_path = os.path.join(script_dir, 'config.json')
-            tracker.configure_from_file(config_path)
-            
+            tracker.configure_from_file("config.json")
             tracker.append(all_objects)
-
-            first_img = cv2.imread(os.path.join(CH00_FOLDER, nucleus_files[0]))
-            tracker.volume = ((0, first_img.shape[1]), (0, first_img.shape[0]), (-1e5, 1e5))
-            
-            tracker.track(step_size=100)
+            first_img = cv2.imread(os.path.join(CH00_FOLDER, used_files[0]))
+            tracker.volume = (
+                (0, first_img.shape[1]),
+                (0, first_img.shape[0]),
+                (-1e5, 1e5)
+            )
+            tracker.track()
             tracker.optimize()
-            
-            # --- 6. Export results ---
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            output_filename = f"btrack_results_{timestamp}.h5"
-            output_path = os.path.join(STATIC_FOLDER, output_filename)
-            tracker.export(output_path, obj_type='obj_type_cells')
 
-            print(f"BTrack analysis complete. Results saved to {output_filename}")
-            
-            return jsonify({
-                'message': f'BTrack analysis successful. Found {len(tracker.tracks)} tracks.',
-                'file': output_filename
+            # Lấy label tại điểm click, nhưng KHÔNG báo lỗi nếu click ra ngoài
+            click_offset = first_frame_index - start
+            clicked_label = int(segmentation_stack[click_offset][int(click_y), int(click_x)])
+            if clicked_label == 0:
+                clicked_label = None  # Không dùng nhưng không lỗi
+
+            # Tìm track gần nhất điểm click, nếu không có → track rỗng
+            best_track = None
+            best_dist = 1e20
+
+            for tr in tracker.tracks:
+                for i in range(len(tr.x)):
+                    d = (tr.x[i] - click_x) ** 2 + (tr.y[i] - click_y) ** 2
+                    if d < best_dist:
+                        best_dist = d
+                        best_track = tr
+
+            # Nếu không tìm được track → tạo track rỗng
+            if best_track is None:
+                best_track = type("FakeTrack", (), {})()
+                best_track.x = [0] * len(used_files)
+                best_track.y = [0] * len(used_files)
+                best_track.t = list(range(len(used_files)))
+                best_track.ID = 0
+
+        # --- Segment cytoplasm & measure ---
+        ch002_files = sorted(os.listdir(CH002_FOLDER))
+        excel_data = []
+
+        for i in range(len(best_track.x)):
+            t = int(best_track.t[i])
+            x = int(best_track.x[i])
+            y = int(best_track.y[i])
+
+            mask_t = segmentation_stack[t]
+            label = int(mask_t[int(round(y)), int(round(x))])
+
+            # Nếu không có nucleus thì ghi toàn 0
+            if label == 0:
+                excel_data.append({
+                    "Timepoint": t,
+                    "Mean_whiteness_nucleus": 0,
+                    "Mean_whiteness_cytoplasm": 0,
+                    "CDK2_Activity": 0
+                })
+                continue
+
+            nucleus_mask = (mask_t == label).astype(np.uint8) * 255
+            img_path = os.path.join(CH002_FOLDER, ch002_files[t])
+
+            cyto_mask = segment_cytoplasm_from_nucleus(img_path, nucleus_mask)
+
+            # Nếu không segment được cyto → ghi 0
+            if cyto_mask is None:
+                excel_data.append({
+                    "Timepoint": t,
+                    "Mean_whiteness_nucleus": 0,
+                    "Mean_whiteness_cytoplasm": 0,
+                    "CDK2_Activity": 0
+                })
+                continue
+
+            stats = measure_both_whiteness(img_path, nucleus_mask, cyto_mask)
+
+            excel_data.append({
+                "Timepoint": t,
+                "Mean_whiteness_nucleus": stats["mean_nucleus"],
+                "Mean_whiteness_cytoplasm": stats["mean_cytoplasm"],
+                "CDK2_Activity": stats["cdk2_activity"]
             })
+
+        # --- Output Excel ---
+        df = pd.DataFrame(excel_data)
+        output = BytesIO()
+        df.to_excel(output, index=False)
+        output.seek(0)
+
+        return send_file(
+            output,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            download_name=f"btrack_results_track{best_track.ID}.xlsx",
+            as_attachment=True
+        )
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        print(f"[BTRACK ERROR] {str(e)}")
-        return jsonify({'error': f'An error occurred during BTrack analysis: {str(e)}'}), 500
-
+        return {"error": str(e)}, 500
 
 
 @app.route('/download/<path:filename>')

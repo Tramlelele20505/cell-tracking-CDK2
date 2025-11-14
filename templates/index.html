@@ -753,7 +753,7 @@
                 </div>
                 <div class="upload-buttons">
                     <a href="/upload" class="btn-upload">📁 Upload Folders</a>
-                    <form action="/clear-uploads" method="post" style="display:inline;">
+                    <form action="/clear-uploads" method="post" style="display:inline-block;">
                         <button type="submit" class="btn-clear">🗑️ Clear All</button>
                     </form>
                 </div>
@@ -773,8 +773,6 @@
                         <button class="btn btn-secondary" onclick="setCytoplasmSelectionMode()" id="cytoplasm-mode-btn">
                             🔬 Cytoplasm Selection
                         </button>
-                        <button class="btn btn-secondary" onclick="togglePolygonMode()" id="polygon-mode-btn" 
-                            title="Click to draw connected lines (freeform polygon)">📐 Polygon</button>
                     </div>
 
                     <!-- Các nút chọn, xóa, đo -->
@@ -807,14 +805,19 @@
                         </div>
 
                         <div class="btrack-panel">
-                            <h3>🚀 Full Image Cell Tracking (BTrack)</h3>
-                            <p>This will segment and track all cells in all nucleus images.</p>
-                            <button class="btn btn-success" id="run-btrack-btn" onclick="runBtrack()">
-                                Run BTrack Analysis
+                            <button class="btn" id="run-btrack-btn" onclick="runBtrack()">
+                                Run Tracking 
                             </button>
                             <div id="btrack-status" class="status-message"></div>
+
+                            <!-- Nút download Excel -->
+                            <a id="download-excel-link" class="btn " style="display:none;" download>
+                                Download Results
+                            </a>
                         </div>
                     </div>
+
+                    
 
 
         <div class="content">
@@ -931,6 +934,8 @@
         let isTracking = false;
         let trackingEndTimepoint = null;
         let currentFilename = null;  // giữ filename thật từ backend
+        let selectedNucleus = null;
+
 
 
         // =================== UI HELPERS ===================
@@ -1027,26 +1032,28 @@
             })
             .then(res => res.json())
             .then(data => {
-                if (data.error) {
-                    alert("❌ " + data.error);
-                } else {
-                    console.log("✅ Nucleus contour:", data.contour);
+    if (data.error) {
+        alert("❌ " + data.error);
+    } else {
+        console.log("✅ Nucleus contour:", data.contour);
 
-                    // 👉 Lưu contour nhân
-                    confirmedNucleusContour = data.contour;
+        confirmedNucleusContour = data.contour;
 
-                    // Vẽ overlay trên kênh nucleus
-                    if (data.contour) {
-                        showContourOverlay("nucleus", data.contour);
-                    }
+        // ✅ LƯU CENTROID ĐỂ GỬI QUA BTRACK
+        selectedNucleus = {
+            x: data.centroid.x,
+            y: data.centroid.y
+        };
+        console.log("✅ Selected nucleus centroid:", selectedNucleus);
 
-                    // Cho phép confirm
-                    document.getElementById("confirm-btn").disabled = false;
-                }
-            })
-            .catch(err => {
-                console.error("❌ Network/Fetch error:", err);
-            });
+        if (data.contour) {
+            showContourOverlay("nucleus", data.contour);
+        }
+
+        document.getElementById("confirm-btn").disabled = false;
+    }
+})
+            .catch(err => console.error("❌ Nucleus selection error:", err));
         }
 
 
@@ -1471,53 +1478,66 @@
             alert('❌ Lỗi khi tracking. Kiểm tra console để xem chi tiết.');
         }
     }
-    async function runBtrack() {
-    const statusEl = document.getElementById('btrack-status');
-    const buttonEl = document.getElementById('run-btrack-btn');
+  async function runBtrack() {
+  console.log("▶ runBtrack() called");
+  const statusEl = document.getElementById('btrack-status');
+  const buttonEl = document.getElementById('run-btrack-btn');
+  const downloadLinkEl = document.getElementById('download-excel-link');
+  const start = parseInt(document.getElementById('start-timepoint-select').value);
+  const end = parseInt(document.getElementById('end-timepoint-select').value);
 
-    // ✅ Lấy giá trị start và end từ dropdown
-    const start = parseInt(document.getElementById('start-timepoint-select').value);
-    const end = parseInt(document.getElementById('end-timepoint-select').value);
+  if (!selectedNucleus || !currentFilename) {
+    alert("❌ Bạn phải chọn 1 nhân và filename trước khi chạy BTrack!");
+    return;
+  }
 
-    if (isNaN(start) || isNaN(end) || start < 0 || end < start) {
-        alert("❌ Vui lòng chọn khoảng file hợp lệ (VD: File 1 → File 10).");
-        return;
+  statusEl.innerHTML = `
+    <div class="spinner"></div>
+    <p><strong>Processing...</strong></p>
+  `;
+  buttonEl.disabled = true;
+  downloadLinkEl.style.display = "none"; // ẩn link cũ
+
+  try {
+    const response = await fetch('/api/run-btrack', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        start_timepoint: start,
+        end_timepoint: end,
+        click_x: selectedNucleus.x,
+        click_y: selectedNucleus.y,
+        image_filename: currentFilename
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server error: ${response.status}`);
     }
 
-    // Cập nhật giao diện để báo quá trình đang chạy
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+
+    // Thiết lập link download sẵn sàng
+    downloadLinkEl.href = url;
+    downloadLinkEl.download = `btrack_results_${currentFilename}.xlsx`;
+    downloadLinkEl.textContent = "Download";
+    downloadLinkEl.style.display = "inline-block";
+
+    statusEl.innerHTML = `<p style="color: green; font-weight: bold;">✅ BTrack xong, file Excel sẵn sàng!</p>`;
+
+    // Nếu muốn auto download luôn, uncomment dòng dưới
+    // downloadLinkEl.click();
+
+  } catch (error) {
+    console.error('BTrack Error:', error);
     statusEl.innerHTML = `
-        <div class="spinner"></div>
-        <p><strong>Processing...</strong> This can take several minutes depending on the number of images. Please do not close this window.</p>
+      <p style="color: red; font-weight: bold;">❌ Error: ${error.message}</p>
     `;
-    statusEl.style.display = 'block';
-    buttonEl.disabled = true;
-
-    try {
-        const response = await fetch('/api/run-btrack', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ start_timepoint: start, end_timepoint: end })
-        });
-        const data = await response.json();
-
-        if (!response.ok || data.error) {
-            throw new Error(data.error || `Server error: ${response.status}`);
-        }
-
-        // Hiển thị link tải file khi thành công
-        statusEl.innerHTML = `
-            <p style="color: green; font-weight: bold;">✅ ${data.message}</p>
-            <a href="/download/${encodeURIComponent(data.file)}" class="btn-upload" download>
-                📄 Download ${data.file}
-            </a>
-        `;
-
-    } catch (error) {
-        console.error('BTrack Error:', error);
-        statusEl.innerHTML = `<p style="color: red; font-weight: bold;">❌ Error: ${error.message}</p>`;
-    } finally {
-        buttonEl.disabled = false;
-    }
+    alert("Error running BTrack: " + error.message);
+  } finally {
+    buttonEl.disabled = false;
+  }
 }
 
 
