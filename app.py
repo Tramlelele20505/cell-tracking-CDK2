@@ -471,7 +471,7 @@ def segment_cytoplasm_from_nucleus(
     import cv2
     import numpy as np
 
-    # 1️⃣ Đọc ảnh & khử nhiễu
+    #  Đọc ảnh & khử nhiễu
     img = cv2.imread(cytoplasm_img_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         return None
@@ -482,12 +482,12 @@ def segment_cytoplasm_from_nucleus(
     blur = clahe.apply(blur)
     h, w = img.shape
 
-    # 2️⃣ Dilate nhân 5–10 px để seed lớn hơn nhân
+    #  Dilate nhân 5–10 px để seed lớn hơn nhân
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     dilated_nucleus = cv2.dilate(nucleus_mask, kernel, iterations=dilate_px)
     blur[dilated_nucleus > 0] = 255
 
-    # 3️⃣ Region growing
+    #  Region growing
     visited = np.zeros_like(img, dtype=np.uint8)
     mask = np.zeros_like(img, dtype=np.uint8)
     seed_pts = np.column_stack(np.where(dilated_nucleus > 0))
@@ -520,7 +520,7 @@ def segment_cytoplasm_from_nucleus(
                             continue
                         stack.append((x + dx, y + dy))
 
-    # 4️⃣ Hậu xử lý & lấy contour lớn nhất
+    #  Hậu xử lý & lấy contour lớn nhất
     clean = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=3)
     clean = cv2.morphologyEx(clean, cv2.MORPH_OPEN, kernel, iterations=1)
     contours, _ = cv2.findContours(clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -533,7 +533,7 @@ def segment_cytoplasm_from_nucleus(
     erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     cytoplasm_mask = cv2.erode(cytoplasm_mask, erode_kernel, iterations=3)
 
-    # 5️⃣ Giãn từ nhân theo diện tích, dựa trên 1/4 diện tích ảnh
+    #  Giãn từ nhân theo diện tích, dựa trên 1/4 diện tích ảnh
     nucleus_area = np.sum(nucleus_mask > 0)
     img_area = img.shape[0] * img.shape[1]
 
@@ -547,14 +547,14 @@ def segment_cytoplasm_from_nucleus(
     dist_map = cv2.distanceTransform(255 - nucleus_mask, cv2.DIST_L2, 5)
     expanded_mask = (dist_map <= expand_px).astype(np.uint8) * 255
 
-    # 6️⃣ Lấy giao với mask bào tương gốc
+    #  Lấy giao với mask bào tương gốc
     final_mask = cv2.bitwise_and(cytoplasm_mask, expanded_mask)
 
-    # 7️⃣ Làm mềm viền
+    #  Làm mềm viền
     blurred = cv2.GaussianBlur(final_mask, (5, 5), 0)
     _, final_mask = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY)
 
-    # 8️⃣ Gộp lại với nhân
+    #  Gộp lại với nhân
     final_mask = cv2.bitwise_or(final_mask, nucleus_mask)
 
     return final_mask
@@ -685,8 +685,8 @@ def segment_nuclei(image_path, model_type='nuclei', min_area=50, diameter=None):
     eval_kwargs = {
         'diameter': 35,
         'channels': [0, 0],
-        'flow_threshold': 0.4,
-        'cellprob_threshold': -2.5,
+        'flow_threshold': 0.55,
+        'cellprob_threshold': -4,
         'min_size': 200
     }
 
@@ -1306,6 +1306,7 @@ def run_btrack_analysis():
         import traceback
         traceback.print_exc()
         return {"error": str(e)}, 500
+
 
 
 @app.route('/download/<path:filename>')

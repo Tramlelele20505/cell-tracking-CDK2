@@ -1390,155 +1390,68 @@
                 console.error('❌ Failed to load timepoints:', error);
             }
         }
-    async function startBrightnessTracking() {
-        // ✅ Kiểm tra đã chọn vùng nhân & bào tương
-        if (!confirmedNucleusContour || !confirmedCytoplasmContour) {
-            alert("⚠️ Bạn cần chọn và xác nhận vùng nhân & bào tương trước.");
-            return;
-        }
-
-        // ✅ Lấy giá trị start và end từ dropdown
-        const start = parseInt(document.getElementById('start-timepoint-select').value);
-        const end = parseInt(document.getElementById('end-timepoint-select').value);
-
-        if (isNaN(start) || isNaN(end) || start < 0 || end < start) {
-            alert("❌ Vui lòng chọn khoảng file hợp lệ (VD: File 1 → File 10).");
-            return;
-        }
-
-        try {
-            const res = await fetch('/api/track-cell-brightness', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    nucleusContour: confirmedNucleusContour,
-                    cytoplasmContour: confirmedCytoplasmContour,
-                    start_timepoint: start,
-                    end_timepoint: end
-                })
-            });
-
-            const data = await res.json();
-            console.log('Server response:', data); // 🔹 debug
-
-            if (data.error) {
-                alert("❌ " + data.error);
-                return;
-            }
-
-            const trackingPanel = document.getElementById('tracking-controls');
-            if (!trackingPanel) {
-                console.warn("Tracking panel not found. Link sẽ không hiển thị.");
-                return;
-            }
-
-            // Xóa link cũ nếu có
-            const oldLink = document.getElementById('excel-download-link');
-            if (oldLink) oldLink.remove();
-
-            // Tạo link mới
-            let downloadLink = document.createElement('a');
-            downloadLink.id = 'excel-download-link';
-            downloadLink.style.display = 'block';
-            downloadLink.style.marginTop = '10px';
-            downloadLink.style.fontWeight = '600';
-            downloadLink.style.color = '#007bff';
-            downloadLink.style.textDecoration = 'none';
-
-            if (data.fileContent) {
-                // Nếu server trả base64
-                const byteCharacters = atob(data.fileContent);
-                const byteNumbers = new Array(byteCharacters.length);
-                for (let i = 0; i < byteCharacters.length; i++) {
-                    byteNumbers[i] = byteCharacters.charCodeAt(i);
-                }
-                const byteArray = new Uint8Array(byteNumbers);
-                const blob = new Blob([byteArray], {
-                    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                });
-                const downloadUrl = URL.createObjectURL(blob);
-                downloadLink.href = downloadUrl;
-                downloadLink.download = data.fileName || 'whiteness.xlsx';
-                downloadLink.textContent = `📄 Tải file Excel: ${downloadLink.download}`;
-            } else if (data.file) {
-                // Nếu server trả đường dẫn file
-                downloadLink.href = `/download/${encodeURIComponent(data.file)}`;
-                downloadLink.download = data.file;
-                downloadLink.textContent = `📄 Tải file Excel: ${data.file}`;
-            } else {
-                alert("❌ Server không trả file Excel hợp lệ.");
-                return;
-            }
-
-            trackingPanel.appendChild(downloadLink);
-            alert("✅ Tracking hoàn tất. File Excel sẵn sàng để tải về.");
-
-        } catch (err) {
-            console.error('❌ Tracking error:', err);
-            alert('❌ Lỗi khi tracking. Kiểm tra console để xem chi tiết.');
-        }
-    }
+    
   async function runBtrack() {
-  console.log("▶ runBtrack() called");
-  const statusEl = document.getElementById('btrack-status');
-  const buttonEl = document.getElementById('run-btrack-btn');
-  const downloadLinkEl = document.getElementById('download-excel-link');
-  const start = parseInt(document.getElementById('start-timepoint-select').value);
-  const end = parseInt(document.getElementById('end-timepoint-select').value);
+    console.log("▶ runBtrack() called");
+    const statusEl = document.getElementById('btrack-status');
+    const buttonEl = document.getElementById('run-btrack-btn');
+    const downloadLinkEl = document.getElementById('download-excel-link');
+    const start = parseInt(document.getElementById('start-timepoint-select').value);
+    const end = parseInt(document.getElementById('end-timepoint-select').value);
 
-  if (!selectedNucleus || !currentFilename) {
-    alert("❌ Bạn phải chọn 1 nhân và filename trước khi chạy BTrack!");
-    return;
-  }
-
-  statusEl.innerHTML = `
-    <div class="spinner"></div>
-    <p><strong>Processing...</strong></p>
-  `;
-  buttonEl.disabled = true;
-  downloadLinkEl.style.display = "none"; // ẩn link cũ
-
-  try {
-    const response = await fetch('/api/run-btrack', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        start_timepoint: start,
-        end_timepoint: end,
-        click_x: selectedNucleus.x,
-        click_y: selectedNucleus.y,
-        image_filename: currentFilename
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Server error: ${response.status}`);
+    if (!selectedNucleus || !currentFilename) {
+        alert("❌ Bạn phải chọn 1 nhân và filename trước khi chạy BTrack!");
+        return;
     }
 
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-
-    // Thiết lập link download sẵn sàng
-    downloadLinkEl.href = url;
-    downloadLinkEl.download = `btrack_results_${currentFilename}.xlsx`;
-    downloadLinkEl.textContent = "Download";
-    downloadLinkEl.style.display = "inline-block";
-
-    statusEl.innerHTML = `<p style="color: green; font-weight: bold;">✅ BTrack xong, file Excel sẵn sàng!</p>`;
-
-    // Nếu muốn auto download luôn, uncomment dòng dưới
-    // downloadLinkEl.click();
-
-  } catch (error) {
-    console.error('BTrack Error:', error);
     statusEl.innerHTML = `
-      <p style="color: red; font-weight: bold;">❌ Error: ${error.message}</p>
+        <div class="spinner"></div>
+        <p><strong>Processing...</strong></p>
     `;
-    alert("Error running BTrack: " + error.message);
-  } finally {
-    buttonEl.disabled = false;
-  }
-}
+    buttonEl.disabled = true;
+    downloadLinkEl.style.display = "none"; // ẩn link cũ
+
+    try {
+        const response = await fetch('/api/run-btrack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            start_timepoint: start,
+            end_timepoint: end,
+            click_x: selectedNucleus.x,
+            click_y: selectedNucleus.y,
+            image_filename: currentFilename
+        })
+        });
+
+        if (!response.ok) {
+        throw new Error(`Server error: ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+
+        // Thiết lập link download sẵn sàng
+        downloadLinkEl.href = url;
+        downloadLinkEl.download = `btrack_results_${currentFilename}.xlsx`;
+        downloadLinkEl.textContent = "Download";
+        downloadLinkEl.style.display = "inline-block";
+
+        statusEl.innerHTML = `<p style="color: green; font-weight: bold;">✅ BTrack xong, file Excel sẵn sàng!</p>`;
+
+        // Nếu muốn auto download luôn, uncomment dòng dưới
+        // downloadLinkEl.click();
+
+    } catch (error) {
+        console.error('BTrack Error:', error);
+        statusEl.innerHTML = `
+        <p style="color: red; font-weight: bold;">❌ Error: ${error.message}</p>
+        `;
+        alert("Error running BTrack: " + error.message);
+    } finally {
+        buttonEl.disabled = false;
+    }
+    }
 
 
     </script>
