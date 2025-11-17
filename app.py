@@ -45,6 +45,7 @@ app.secret_key = 'your-secret-key-here'  # Change this in production
 
 # Configuration
 UPLOAD_FOLDER = "uploads"
+CACHE_DIR = "seg_cache"
 CH00_FOLDER = os.path.join(UPLOAD_FOLDER, "ch00")  # Nucleus only images
 CH002_FOLDER = os.path.join(UPLOAD_FOLDER, "ch002")  # Nucleus + cytoplasm images
 STATIC_FOLDER = "static"
@@ -55,6 +56,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(CH00_FOLDER, exist_ok=True)
 os.makedirs(CH002_FOLDER, exist_ok=True)
 os.makedirs(STATIC_FOLDER, exist_ok=True)
+os.makedirs(CACHE_DIR, exist_ok=True) 
 def get_cyto_model():
     """Load and cache Cellpose cyto2 model for CPU."""
     global _cyto_model_cache
@@ -290,7 +292,7 @@ def clear_uploads():
     """
     try:
         # Remove all files from upload folders
-        for folder in [CH00_FOLDER, CH002_FOLDER]:
+        for folder in [CH00_FOLDER, CH002_FOLDER, CACHE_DIR]:
             if os.path.exists(folder):
                 for filename in os.listdir(folder):
                     file_path = os.path.join(folder, filename)
@@ -540,6 +542,7 @@ def segment_cytoplasm_from_nucleus(
     min_expand_px = 5
     max_expand_px = 22
 
+
     scale_factor = np.sqrt(nucleus_area / float(img_area))
     expand_px = int(min_expand_px + (max_expand_px - min_expand_px) * scale_factor)
     expand_px = max(min_expand_px, min(expand_px, max_expand_px))
@@ -735,7 +738,8 @@ def select_nucleus_at_point(image_path, click_x, click_y):
     Chọn nhân chứa điểm click (click_x, click_y)
     Trả về: mask của nhân, contour, centroid
     """
-    mask, contours, centroids = segment_nuclei(image_path)
+    mask, contours, centroids = segment_nuclei_cached(image_path)
+
     selected_mask = np.zeros_like(mask)
     selected_contour = None
     selected_centroid = None
@@ -792,6 +796,48 @@ def select_nucleus():
         "area": area,
         "contour": contour_list
     })
+
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+def segment_nuclei_cached(image_path):
+    """
+    Segment bằng cache:
+      - nếu mask đã tồn tại → load lại
+      - nếu chưa có → segment + lưu
+    """
+    base = os.path.basename(image_path)
+    name = os.path.splitext(base)[0]
+    cache_mask_path = os.path.join(CACHE_DIR, f"{name}_mask.npy")
+
+    # CASE 1: mask đã có -> load
+    if os.path.exists(cache_mask_path):
+        mask = np.load(cache_mask_path).astype(np.uint8)
+
+        # Trả về contours + centroid
+        contours = []
+        centroids = []
+
+        for label in np.unique(mask):
+            if label == 0:
+                continue
+
+            binary = (mask == label).astype(np.uint8) * 255
+            cnts, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            for c in cnts:
+                contours.append(c)
+                M = cv2.moments(c)
+                if M["m00"] > 0:
+                    cx = int(M["m10"]/M["m00"])
+                    cy = int(M["m01"]/M["m00"])
+                    centroids.append((cx, cy))
+
+        return mask, contours, centroids
+
+    # CASE 2: mask chưa có -> segment Cellpose và lưu
+    mask, contours, centroids = segment_nuclei(image_path)
+    np.save(cache_mask_path, mask)
+    return mask, contours, centroids
 
 
 
@@ -1189,7 +1235,7 @@ def run_btrack_analysis():
         all_masks = []
         for fname in used_files:
             imgpath = os.path.join(CH00_FOLDER, fname)
-            mask, _, _ = segment_nuclei(imgpath, min_area=50)
+            mask, _, _ = segment_nuclei_cached(imgpath)
 
             if mask is None:
                 # Nếu không segment được thì tạo mask 0
