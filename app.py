@@ -16,18 +16,10 @@ from collections import OrderedDict
 import cv2
 import numpy as np
 from PIL import Image
-import io
 from io import BytesIO
-import requests
 import openpyxl
 from openpyxl import Workbook
 from datetime import datetime
-import uuid
-import shutil
-import base64 # For encoding/decoding base64 images
-from flask import send_from_directory
-import os
-import torch 
 import base64
 from cellpose.models import CellposeModel #version: 2.3.2
 from scipy import ndimage as ndi
@@ -35,39 +27,45 @@ from skimage.morphology import disk
 from skimage.filters import median as sk_median
 from scipy.ndimage import binary_dilation, binary_erosion
 from skimage import exposure
+import btrack
+import pandas as pd
+import json
 
-_cyto_model_cache = None
+
+
 os.environ['OMP_NUM_THREADS'] = '6'
 os.environ['MKL_NUM_THREADS'] = '6'
-
+#=======Configuration & Globals========
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here'  # Change this in production
+app.secret_key = 'your-secret-key-here'
 
-# Configuration
 UPLOAD_FOLDER = "uploads"
 CACHE_DIR = "seg_cache"
-CH00_FOLDER = os.path.join(UPLOAD_FOLDER, "ch00")  # Nucleus only images
-CH002_FOLDER = os.path.join(UPLOAD_FOLDER, "ch002")  # Nucleus + cytoplasm images
+CH00_FOLDER = os.path.join(UPLOAD_FOLDER, "ch00")  
+CH002_FOLDER = os.path.join(UPLOAD_FOLDER, "ch002")  
 STATIC_FOLDER = "static"
+ALLOWED_EXTENSIONS = {'tif', 'tiff', 'jpg', 'jpeg', 'png', 'bmp'}
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024  # 2 GB max upload size
 
+_cyto_model_cache = None
+
 # Create folders if they don't exist
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(CH00_FOLDER, exist_ok=True)
-os.makedirs(CH002_FOLDER, exist_ok=True)
-os.makedirs(STATIC_FOLDER, exist_ok=True)
-os.makedirs(CACHE_DIR, exist_ok=True) 
-def get_cyto_model():
-    """Load and cache Cellpose cyto2 model for CPU."""
-    global _cyto_model_cache
+for d in [UPLOAD_FOLDER, CH00_FOLDER, CH002_FOLDER, STATIC_FOLDER, CACHE_DIR]:
+    os.makedirs(d, exist_ok=True)
     
+def get_cyto_model():
+    """
+    Loads and caches the Cellpose 'cyto2' model for segmentation using CPU.
+
+    This function uses a global variable to store the model, ensuring it is
+    loaded only once per application run to speeds up program.
+    """
+    global _cyto_model_cache
+
     if _cyto_model_cache is None:
             _cyto_model_cache = CellposeModel(model_type="cyto2", gpu=False)
       
     return _cyto_model_cache
-
-# Allowed file extensions
-ALLOWED_EXTENSIONS = {'tif', 'tiff', 'jpg', 'jpeg', 'png', 'bmp'}
 
 def allowed_file(filename):
     """Check if file extension is allowed"""
@@ -75,7 +73,10 @@ def allowed_file(filename):
 
 def natural_sort_key(s):
     """
-    Natural sorting key function that sorts numbers numerically
+    This splits the string into text and number parts.
+    Example:
+        natural_sort_key("file10.tif")
+        → ["file", 10, ".tif"]
     """
     import re
     return [int(text) if text.isdigit() else text.lower()
@@ -83,13 +84,29 @@ def natural_sort_key(s):
 
 def get_image_files():
     """
-    Get all image files from both folders and organize them by their base name
-    Uses natural sorting to ensure proper chronological order
+    Scan the upload folders, match nucleus (ch00) and nucleus+cytoplasm (ch002)
+    images, and return them as paired entries.
+
+    Pairing is done in two steps:
+
+    1. **Primary matching: Same base filename**
+       Example:
+           ch00:  "img1.tif"
+           ch002: "img1.tif"
+       → These are paired together.
+
+    2. **Fallback matching: Index-based pairing**
+       If no filenames match between the folders, the function pairs files
+       simply by their index after natural sorting.
+       Example:
+           ch00_files[0] ↔ ch002_files[0]
+           ch00_files[1] ↔ ch002_files[1]
+       Useful when filenames differ but ordering corresponds.
     """
     ch00_files = []
     ch002_files = []
     
-    # Get ALL ch00 files (nucleus only) with natural sorting
+    # Scan ch00 (nucleus) folder for allowed image files and sort by natural key
     if os.path.exists(CH00_FOLDER):
         ch00_files = sorted(
             [file for file in os.listdir(CH00_FOLDER) 
@@ -98,7 +115,7 @@ def get_image_files():
         )
         print(f"Found {len(ch00_files)} ch00 files")
     
-    # Get ALL ch002 files (nucleus + cytoplasm) with natural sorting
+    # Scan ch02 (nucleus) folder for allowed image files and sort by natural key
     if os.path.exists(CH002_FOLDER):
         ch002_files = sorted(
             [file for file in os.listdir(CH002_FOLDER) 
@@ -107,11 +124,11 @@ def get_image_files():
         )
         print(f"Found {len(ch002_files)} ch002 files")
     
-    # Build lookup by base name for ch002 (ignore extension)
+    # Create a lookup for ch002 files by their base name for quick matching (ignore extension)
     ch002_by_base = {os.path.splitext(f)[0]: f for f in ch002_files}
-
-    # Attempt to pair by exact base name first
     image_pairs = OrderedDict()
+    
+    # --- Pairing Strategy 1: Match by identical base name ---
     for ch00_file in ch00_files:
         base_name = os.path.splitext(ch00_file)[0]
         ch002_file = ch002_by_base.get(base_name)
@@ -121,7 +138,7 @@ def get_image_files():
                 'nucleus_cytoplasm': ch002_file
             }
 
-    # If no pairs (or very few) were found, fall back to index-based pairing
+    # --- Pairing Strategy 2: Fallback to index-based pairing ---
     if len(image_pairs) == 0 and ch00_files and ch002_files:
         print("No filename matches across channels. Falling back to index-based pairing.")
         num_pairs = min(len(ch00_files), len(ch002_files))
@@ -139,7 +156,9 @@ def get_image_files():
 
 def get_timepoints():
     """
-    Get all available timepoints - each file is its own timepoint
+    Generates a list of timepoint indices based on the number of paired images.
+    It assigns a time index (0, 1, 2, …) to each image pair in the same order they appear in `image_pairs`
+    Simply, it assign the index in range of len of image_pairs to its order in list.
     """
     image_pairs = get_image_files()
     timepoints = []
@@ -147,8 +166,6 @@ def get_timepoints():
     # Create a list of all base names in original folder order
     base_names = list(image_pairs.keys())
     
-    # Keep original order - no sorting
-    # Each base_name becomes a timepoint index
     for i, base_name in enumerate(base_names):
         timepoints.append(i)
     
@@ -156,9 +173,18 @@ def get_timepoints():
 
 def parse_image_info(filename):
     """
-    Parse image filename to extract row, column, site, and timepoint
-    Format: {row}_{column}_{site}_t{timepoint}_ch{channel}.tif
+    Extracts metadata (row, column, site, timepoint) from a filename.
+
+    Assumes a specific filename format: "row_col_site_t..._ch....tif".
+    If the format does not match, it returns default "Uploaded Image" info.
+
+    Args:
+        filename (str): The filename to parse.
+
+    Returns:
+        dict: A dictionary containing the parsed metadata.
     """
+    # Regex to capture information from a structured filename
     pattern = r'(\d+)_(\d+)_(\d+)_t(\d+)_ch(\d+)\.tif'
     match = re.match(pattern, filename)
     
@@ -190,6 +216,33 @@ def parse_image_info(filename):
         'location': "Uploaded Image"
     }
 
+def serve_processed_image(folder, filename):
+    """
+    Generic function to load a grayscale image, convert it to JPEG, and serve it.
+    
+    This function is used for serve_ch00_image and serve_ch002_image
+    """
+    try:
+        image_path = os.path.join(folder, filename)
+        if not os.path.exists(image_path):
+            return "Image not found", 404
+        
+        img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            return "Failed to load image", 500
+        
+        # Encode the image to JPEG format
+        _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        
+        # Create a response with caching headers
+        response = Response(buffer.tobytes(), mimetype='image/jpeg')
+        response.headers['Cache-Control'] = 'public, max-age=31536000'
+        return response
+        
+    except Exception as e:
+        print(f"Error serving image {filename}: {e}")
+        return "Error processing image", 500
+    
 @app.route('/')
 def index():
     """
@@ -200,17 +253,30 @@ def index():
 @app.route('/upload', methods=['GET', 'POST'])
 def upload_files():
     """
-    Handle folder uploads for both channels
+    Handles uploading of images for both channels:
+      - ch00  = nucleus only images
+      - ch002 = nucleus + cytoplasm images
+
+    The function:
+        • Accepts uploaded files from two channels
+        • Validates file types
+        • Saves them into the correct folders
+        • Cleans up partially saved files if an error occurs
+        • Shows the user a confirmation (flash message)
     """
+    #Handle POST (actual upload)
     if request.method == 'POST':
-        # Gather uploaded lists (may be missing or empty for one channel)
+        # Retrieve file lists from the form upload.
+        # If a channel is not provided, it becomes an empty list.
         ch00_files = request.files.getlist('ch00_files') if 'ch00_files' in request.files else []
         ch002_files = request.files.getlist('ch002_files') if 'ch002_files' in request.files else []
         
+        # If submitted the form but uploaded nothing, return warning
         if not ch00_files and not ch002_files:
             flash('No folders selected. Please choose at least one channel folder to upload.')
             return redirect(request.url)
         
+        #Counters
         uploaded_count = 0
         ch00_image_count = 0
         ch002_image_count = 0
@@ -221,17 +287,27 @@ def upload_files():
         # Process ch00 files (nucleus only) - filter for image files only
         try:
             for file in ch00_files:
+                
+                # Ignore empty file inputs
                 if not file or not file.filename:
                     continue
-                # Strip any provided path and sanitize the name
+                
+                # Clean filename and remove directory paths
                 original_name = os.path.basename(file.filename)
                 safe_name = secure_filename(original_name)
+                
+                # Check the valid extensions
                 if not allowed_file(safe_name):
                     continue
+                
+                 # Build storage path inside ch00 folder
                 filepath = os.path.join(CH00_FOLDER, safe_name)
                 # Ensure upload directories exist
                 os.makedirs(CH00_FOLDER, exist_ok=True)
+                # Save file to disk
                 file.save(filepath)
+                
+                
                 saved_file_paths.append(filepath)
                 uploaded_count += 1
                 ch00_image_count += 1
@@ -246,7 +322,7 @@ def upload_files():
             flash('Upload failed: not enough disk space. Please free space or upload fewer images.')
             return redirect(request.url)
         
-        # Process ch002 files (nucleus + cytoplasm) - filter for image files only
+        # The same with second channel
         try:
             for file in ch002_files:
                 if not file or not file.filename:
@@ -271,6 +347,7 @@ def upload_files():
             flash('Upload failed: not enough disk space. Please free space or upload fewer images.')
             return redirect(request.url)
         
+        # If all done, show informations:
         if uploaded_count > 0:
             parts = []
             if ch00_image_count:
@@ -288,7 +365,7 @@ def upload_files():
 @app.route('/clear-uploads', methods=['POST'])
 def clear_uploads():
     """
-    Clear all uploaded files
+    Deletes all uploaded images and cached segmentation masks.
     """
     try:
         # Remove all files from upload folders
@@ -343,7 +420,7 @@ def get_random_cell():
 @app.route('/api/all-cells')
 def get_all_cells():
     """
-    API endpoint to get all available cell image pairs
+    Returns a sorted list of all paired cell images with their metadata.
     """
     image_pairs = get_image_files()
     
@@ -455,25 +532,22 @@ def get_cells_by_timepoint(timepoint):
             'cells': []
         })
 
-
 def segment_cytoplasm_from_nucleus(
     cytoplasm_img_path, 
     nucleus_mask,
     denoise_h=10,
-    dilate_px=3,          # dilate nhân 5–10 px
+    dilate_px=3,          # dilate nucleus 5–10 px
     bright_thresh=30,
     dark_thresh=20,
     dark_region_ratio=0.1
 ):
     """
-    Segment cytoplasm quanh nucleus bằng region growing.
-    Sau đó giãn thêm từ nhân theo diện tích, khoảng 5–22 px,
-    tạo mask bào tương mới và lấy giao với mask bào tương gốc.
+    It uses region growing and morphological operations to define the cytoplasm area around a given nucleus mask.
     """
     import cv2
     import numpy as np
 
-    #  Đọc ảnh & khử nhiễu
+    #  Read image & denoise
     img = cv2.imread(cytoplasm_img_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         return None
@@ -484,7 +558,7 @@ def segment_cytoplasm_from_nucleus(
     blur = clahe.apply(blur)
     h, w = img.shape
 
-    #  Dilate nhân 5–10 px để seed lớn hơn nhân
+    #  Dilate the nucleus 5–10 px so that the seed is greater than the nucleus
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     dilated_nucleus = cv2.dilate(nucleus_mask, kernel, iterations=dilate_px)
     blur[dilated_nucleus > 0] = 255
@@ -504,7 +578,7 @@ def segment_cytoplasm_from_nucleus(
         visited[y, x] = 1
         val = blur[y, x]
 
-        if val >= bright_thresh:  # cytoplasm sáng
+        if val >= bright_thresh:  # bright cytoplasm
             mask[y, x] = 255
             for dx in [-1, 0, 1]:
                 for dy in [-1, 0, 1]:
@@ -522,7 +596,7 @@ def segment_cytoplasm_from_nucleus(
                             continue
                         stack.append((x + dx, y + dy))
 
-    #  Hậu xử lý & lấy contour lớn nhất
+    #  Post-Processing & taking the largest contour 
     clean = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=3)
     clean = cv2.morphologyEx(clean, cv2.MORPH_OPEN, kernel, iterations=1)
     contours, _ = cv2.findContours(clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -535,7 +609,7 @@ def segment_cytoplasm_from_nucleus(
     erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     cytoplasm_mask = cv2.erode(cytoplasm_mask, erode_kernel, iterations=3)
 
-    #  Giãn từ nhân theo diện tích, dựa trên 1/4 diện tích ảnh
+    #  Expand from nucleus based on area, based on 1/4 of the image area
     nucleus_area = np.sum(nucleus_mask > 0)
     img_area = img.shape[0] * img.shape[1]
 
@@ -550,18 +624,17 @@ def segment_cytoplasm_from_nucleus(
     dist_map = cv2.distanceTransform(255 - nucleus_mask, cv2.DIST_L2, 5)
     expanded_mask = (dist_map <= expand_px).astype(np.uint8) * 255
 
-    #  Lấy giao với mask bào tương gốc
+    #  take the intersection with the original cytoplasm mask
     final_mask = cv2.bitwise_and(cytoplasm_mask, expanded_mask)
 
-    #  Làm mềm viền
+    #  soften the cytoplasm
     blurred = cv2.GaussianBlur(final_mask, (5, 5), 0)
     _, final_mask = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY)
 
-    #  Gộp lại với nhân
+    #  merge with the nucleus
     final_mask = cv2.bitwise_or(final_mask, nucleus_mask)
 
     return final_mask
-
 
 @app.route('/api/select-cytoplasm', methods=['POST'])
 def select_cytoplasm():
@@ -583,17 +656,17 @@ def select_cytoplasm():
     if img is None:
         return jsonify({"error": "Failed to read image"}), 500
 
-    # build mask từ nucleus contour
+    # build mask from nucleus contour
     nucleus_mask = np.zeros_like(img, dtype=np.uint8)
     pts = np.array(nucleus_contour, dtype=np.int32).reshape((-1, 1, 2))
     cv2.fillPoly(nucleus_mask, [pts], 255)
 
-    # chạy cytoplasm segmentation
+    # run cytoplasm segmentation
     cytoplasm_mask = segment_cytoplasm_from_nucleus(image_path, nucleus_mask)
     if cytoplasm_mask is None:
         return jsonify({"error": "Failed to segment cytoplasm"}), 500
 
-    # convert sang contour polygon
+    # convert to contour polygon
     contours, _ = cv2.findContours(cytoplasm_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return jsonify({"error": "No cytoplasm contour found"}), 500
@@ -606,90 +679,93 @@ def select_cytoplasm():
     return jsonify({"cytoplasm_contour": cyto_contour})
 
 def preprocess_image(gray, bg_sigma=25, median_radius=2, denoise_sigma=0.8, clahe_clip=0.03):
-    """Preprocess image: BG subtraction, median filter, gaussian smoothing, CLAHE."""
-    # Background subtraction
+    """
+    Applies a series of filters to preprocess an image for segmentation.
+    
+    The pipeline includes background subtraction, median filtering, Gaussian smoothing,
+    and Contrast Limited Adaptive Histogram Equalization (CLAHE).
+    
+    Args:
+        gray (np.array): The input grayscale image (float, 0-1 range).
+        bg_sigma (int): Sigma for Gaussian filter for background subtraction.
+        median_radius (int): Radius for the median filter disk.
+        denoise_sigma (float): Sigma for the Gaussian denoising filter.
+        clahe_clip (float): Clip limit for CLAHE.
+
+    Returns:
+        np.array: The processed image.
+    """
+    # Background subtraction using a large-sigma Gaussian filter
     bg = ndi.gaussian_filter(gray, sigma=bg_sigma)
     sub = gray - bg
     sub = np.clip(sub, 0, None)
     if sub.max() > 0:
         sub = sub / sub.max()
     
-    # Median filter + gaussian smoothing
+    # Denoising using median and Gaussian filters
     den = sk_median(sub, disk(median_radius))
     den = ndi.gaussian_filter(den, sigma=denoise_sigma)
     
-    # CLAHE for contrast enhancement
+    # Contrast enhancement
     deneq = exposure.equalize_adapthist(den, clip_limit=clahe_clip)
     return deneq
 
 def shrink_masks_aggressive(masks, erosion_iterations=4):
     """
-    Aggressively erode masks to fit tightly to nuclei.
-    No dilation recovery - keeps masks smaller.
+    Aggressively shrinks segmented masks by applying binary erosion.
+    This is used to ensure masks fit tightly around bright nuclei centers.
+    
+    Args:
+        masks (np.array): The labeled mask output from Cellpose.
+        erosion_iterations (int): The number of erosion iterations.
+
+    Returns:
+        np.array: The shrunken labeled mask.
     """
-    print(f"[INFO] Applying aggressive erosion ({erosion_iterations} iterations)...")
     masks_shrunk = np.zeros_like(masks)
+    
+    # Erode each individual nucleus mask
     for nucleus_id in np.unique(masks):
         if nucleus_id == 0:
             continue
+        
         nucleus_mask = (masks == nucleus_id).astype(np.uint8)
-        # Pure erosion - no dilation back
+        # Apply erosion multiple times
         shrunk = nucleus_mask.astype(bool)
         for _ in range(erosion_iterations):
             shrunk = binary_erosion(shrunk)
-        if shrunk.sum() > 0:  # Only keep if nuclei remains
+            
+        # Only keep the shrunk mask if it's not empty
+        if shrunk.sum() > 0:
             masks_shrunk[shrunk] = nucleus_id
     n_nuclei_kept = masks_shrunk.max()
-    print(f"[INFO] After erosion: {n_nuclei_kept} nuclei (smaller, tighter masks)")
     return masks_shrunk
 
-def fill_inner_holes(mask, gray_img, circularity_thresh=0.6, area_ratio_thresh=0.3, elongation_thresh=3.0):
+def segment_nuclei(image_path, min_area=50):
     """
-    Lấp lỗ bên trong nhân nhưng bỏ qua rãnh dài giữa các nhân.
-    Dựa trên độ tròn + tỷ lệ diện tích + độ đậm bên trong + elongation.
+    Segments nuclei in an image using a pre-trained Cellpose model.
+    Includes preprocessing and shrink masks to refine masks.
+    
+    Args:
+        image_path (str): The path to the image file.
+        min_area (int): The minimum area (in pixels) for a valid nucleus.
+
+    Returns:
+        tuple: A tuple containing:
+            - np.array: The final labeled mask.
+            - list: A list of valid contour arrays.
+            - list: A list of (x, y) centroids for each valid nucleus.
     """
-    mask_filled = mask.copy()
-    contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-
-    if hierarchy is not None:
-        for i, h in enumerate(hierarchy[0]):
-            parent_idx = h[3]
-            if parent_idx != -1:  # contour con
-                area = cv2.contourArea(contours[i])
-                perimeter = cv2.arcLength(contours[i], True)
-                circularity = 4 * np.pi * area / (perimeter**2 + 1e-6)
-
-                # contour cha (nhân chứa nó)
-                parent_area = cv2.contourArea(contours[parent_idx]) if parent_idx >= 0 else 1e9
-                area_ratio = area / (parent_area + 1e-6)
-
-                # elongation = chiều dài lớn nhất / chiều dài nhỏ nhất
-                x, y, w, h_rect = cv2.boundingRect(contours[i])
-                elongation = max(w, h_rect) / (min(w, h_rect) + 1e-6)
-
-                # trung bình mức xám bên trong lỗ
-                mask_hole = np.zeros_like(mask)
-                cv2.drawContours(mask_hole, [contours[i]], -1, 255, -1)
-                mean_val = cv2.mean(gray_img, mask=mask_hole)[0]
-
-                # Điều kiện: hình tròn + nhỏ so với cha + không quá tối + không dài mảnh
-                if circularity > circularity_thresh and area_ratio < area_ratio_thresh \
-                   and mean_val > 30 and elongation < elongation_thresh:
-                    cv2.drawContours(mask_filled, [contours[i]], -1, 255, -1)
-
-    return mask_filled
-
-def segment_nuclei(image_path, model_type='nuclei', min_area=50, diameter=None):
-    """
-    Segment nuclei from image using Cellpose.
-    Modified to match dual_model preprocessing behavior.
-    """
+    
+    #Load pre-trained Cellpose model - cyto2
     model = get_cyto_model()
+    
+    # Evaluation parameters for Cellpose
     eval_kwargs = {
         'diameter': 35,
         'channels': [0, 0],
         'flow_threshold': 0.55,
-        'cellprob_threshold': -4,
+        'cellprob_threshold': -3.5,
         'min_size': 200
     }
 
@@ -698,29 +774,38 @@ def segment_nuclei(image_path, model_type='nuclei', min_area=50, diameter=None):
     if img is None:
         return None, [], []
     
+    # Convert image to float32 and normalize to [0, 1] if needed
+    #Cellpose expect floating-point numbers instead of integers.
     img_float = img.astype(np.float32)
     if img_float.max() > 1:
         img_float = img_float / 255.0
     
+    #Preprocess the image
     img_processed = preprocess_image(img_float, bg_sigma=8, median_radius=2, denoise_sigma=0.8, clahe_clip=0.03)
 
-    # Evaluate with scaled image
+    # Run Cellpose segmentation
     result = model.eval(img_processed, **eval_kwargs)
-    mask = result[0].astype(np.uint8)
+    mask = result[0].astype(np.uint8) # convert predicted mask to uint8
     
+    #Refine masks by aggressive shrinking
     mask = shrink_masks_aggressive(mask, erosion_iterations=6)
 
+    #Extract valid contours and centroids
     valid_contours = []
     centroids = []
 
     for label in np.unique(mask):
         if label == 0:  # Skip background
             continue
-
+        
+        # Create a binary mask for this nucleus    
         binary_mask = (mask == label).astype(np.uint8) * 255
+        
+        # Find contours for this nucleus
         cnts, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         for cnt in cnts:
+            # Ignore small objects below min_area, avoid noise
             if cv2.contourArea(cnt) < min_area:
                 continue
             valid_contours.append(cnt)
@@ -735,15 +820,19 @@ def segment_nuclei(image_path, model_type='nuclei', min_area=50, diameter=None):
 
 def select_nucleus_at_point(image_path, click_x, click_y):
     """
-    Chọn nhân chứa điểm click (click_x, click_y)
-    Trả về: mask của nhân, contour, centroid
+    Selects the nucleus that contains a given click point (click_x, click_y) by:
+        Loads or computes the segmentation mask and nuclei contours from the image.
+        Finds which contour contains the clicked point.
+        Returns a mask of the selected nucleus, its contour, and its centroid.
     """
+    #Load or segment nuclei (cached)
     mask, contours, centroids = segment_nuclei_cached(image_path)
 
     selected_mask = np.zeros_like(mask)
     selected_contour = None
     selected_centroid = None
 
+    #Find the nucleus containing the click
     for i, cnt in enumerate(contours):
         if cv2.pointPolygonTest(cnt, (click_x, click_y), False) >= 0:
             selected_contour = cnt
@@ -759,61 +848,27 @@ def select_nucleus_at_point(image_path, click_x, click_y):
         return None, None, None
 
     return selected_mask, selected_contour, selected_centroid
-@app.route('/api/select-nucleus', methods=['POST'])
-def select_nucleus():
-    """
-    Nhận click (x, y) từ client và trả về contour + centroid + diện tích của nhân chứa điểm đó
-    """
-    data = request.json
-    image_filename = data.get("image_filename")
-    channel = data.get("channel", "ch002")
-    click_x = data.get("click_x")
-    click_y = data.get("click_y")
-
-    if not all([image_filename, click_x is not None, click_y is not None]):
-        return jsonify({"error": "Missing parameters"}), 400
-
-    # Chọn folder theo channel
-    if channel == "ch002":
-        image_path = os.path.join(CH002_FOLDER, image_filename)
-    else:
-        image_path = os.path.join(CH00_FOLDER, image_filename)
-
-    if not os.path.exists(image_path):
-        return jsonify({"error": f"Image not found: {image_path}"}), 404
-
-    mask, contour, centroid = select_nucleus_at_point(image_path, click_x, click_y)
-    if mask is None or contour is None:
-        return jsonify({"error": "No nucleus found at this point"}), 404
-
-    area = int(cv2.contourArea(contour))
-
-    # Convert contour sang list (danh sách [x, y])
-    contour_list = [(int(pt[0][0]), int(pt[0][1])) for pt in contour]
-
-    return jsonify({
-        "centroid": {"x": centroid[0], "y": centroid[1]},
-        "area": area,
-        "contour": contour_list
-    })
-
-os.makedirs(CACHE_DIR, exist_ok=True)
 
 def segment_nuclei_cached(image_path):
     """
-    Segment bằng cache:
-      - nếu mask đã tồn tại → load lại
-      - nếu chưa có → segment + lưu
+    A wrapper for `segment_nuclei` that uses file-based caching.
+    
+    If a segmentation mask for the given image already exists in the cache,
+    it loads it. Otherwise, it runs segmentation and saves the result to the cache.
     """
+    
+    #Construct cache file path
     base = os.path.basename(image_path)
+    
+    # Extract filename without extension
     name = os.path.splitext(base)[0]
     cache_mask_path = os.path.join(CACHE_DIR, f"{name}_mask.npy")
 
-    # CASE 1: mask đã có -> load
+    #CASE 1: Cached mask exists, load it
     if os.path.exists(cache_mask_path):
         mask = np.load(cache_mask_path).astype(np.uint8)
 
-        # Trả về contours + centroid
+        # Find contours and centroids like in segment_nuclei function (below)
         contours = []
         centroids = []
 
@@ -834,80 +889,67 @@ def segment_nuclei_cached(image_path):
 
         return mask, contours, centroids
 
-    # CASE 2: mask chưa có -> segment Cellpose và lưu
+    # CASE 2: Cached mask does NOT exist, run segmentation
     mask, contours, centroids = segment_nuclei(image_path)
     np.save(cache_mask_path, mask)
     return mask, contours, centroids
 
+@app.route('/api/select-nucleus', methods=['POST'])
+def select_nucleus():
+    """
+    Given an (x, y) click coordinate, segments the image and returns the
+    contour, centroid, and area of the nucleus at that point.
+    """
+    # Get data
+    data = request.json
+    image_filename = data.get("image_filename")
+    channel = data.get("channel", "ch002")
+    click_x = data.get("click_x")
+    click_y = data.get("click_y")
 
+    # Validate the parameter above (is not missing)
+    if not all([image_filename, click_x is not None, click_y is not None]):
+        return jsonify({"error": "Missing parameters"}), 400
 
+    # Determine folder based on channel
+    if channel == "ch002":
+        image_path = os.path.join(CH002_FOLDER, image_filename)
+    else:
+        image_path = os.path.join(CH00_FOLDER, image_filename)
+
+    # Check if file exists
+    if not os.path.exists(image_path):
+        return jsonify({"error": f"Image not found: {image_path}"}), 404
+
+    # Select nucleus at clicked point by using select_nucleus_at_point function
+    mask, contour, centroid = select_nucleus_at_point(image_path, click_x, click_y)
+    if mask is None or contour is None:
+        return jsonify({"error": "No nucleus found at this point"}), 404
+
+    # Compute nucleus area
+    area = int(cv2.contourArea(contour))
+
+    # OpenCV contours are nested arrays: [[x, y]], so flatten to [x, y]
+    contour_list = [(int(pt[0][0]), int(pt[0][1])) for pt in contour]
+
+    return jsonify({
+        "centroid": {"x": centroid[0], "y": centroid[1]},
+        "area": area,
+        "contour": contour_list
+    })
 @app.route('/images/ch00/<filename>')
 def serve_ch00_image(filename):
     """
     Serve ch00 (nucleus only) images as JPEG
     """
-    try:
-        # Load image
-        image_path = os.path.join(CH00_FOLDER, filename)
-        if not os.path.exists(image_path):
-            return "Image not found", 404
-        
-        # Read image with OpenCV
-        img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        if img is None:
-            return "Failed to load image", 500
-        
-        # Normalize and enhance for better visibility
-        #img_normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
-        
-        # Apply slight contrast enhancement
-        #img_enhanced = cv2.convertScaleAbs(img_normalized, alpha=1.2, beta=10)
-        
-        # Convert to JPEG
-        _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        
-        # Create response
-        response = Response(buffer.tobytes(), mimetype='image/jpeg')
-        response.headers['Cache-Control'] = 'public, max-age=31536000'
-        return response
-        
-    except Exception as e:
-        print(f"Error serving ch00 image {filename}: {e}")
-        return "Error processing image", 500
+    return serve_processed_image(CH00_FOLDER, filename)
 
 @app.route('/images/ch002/<filename>')
 def serve_ch002_image(filename):
     """
     Serve ch002 (nucleus + cytoplasm) images as JPEG
     """
-    try:
-        # Load image
-        image_path = os.path.join(CH002_FOLDER, filename)
-        if not os.path.exists(image_path):
-            return "Image not found", 404
-        
-        # Read image with OpenCV
-        img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        if img is None:
-            return "Failed to load image", 500
-        
-        # Normalize and enhance for better visibility
-        #img_normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
-        
-        # Apply slight contrast enhancement
-        #img_enhanced = cv2.convertScaleAbs(img_normalized, alpha=1.2, beta=10)
-        
-        # Convert to JPEG
-        _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        
-        # Create response
-        response = Response(buffer.tobytes(), mimetype='image/jpeg')
-        response.headers['Cache-Control'] = 'public, max-age=31536000'
-        return response
-        
-    except Exception as e:
-        print(f"Error serving ch002 image {filename}: {e}")
-        return "Error processing image", 500
+    return serve_processed_image(CH002_FOLDER, filename)
 
 @app.route('/cell/<base_name>')
 def view_specific_cell(base_name):
@@ -930,26 +972,18 @@ def view_specific_cell(base_name):
                          nucleus_info=nucleus_info,
                          cytoplasm_info=cytoplasm_info)
 
-
-
-
 def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_factor=0.5, debug=False):
     """
-    Đo độ sáng trung bình & tỉ lệ pixel sáng trong nhân và bào tương.
-    - Tự động scale ảnh về 8-bit nếu ảnh gốc là 16-bit hoặc float với giá trị >255.
-    - Bào tương = mask cytoplasm - mask nhân.
-    - White ratio tính theo ngưỡng chung cho cả nhân và bào tương:
-        threshold = trung bình (mean_nuc + mean_cyto) + white_ratio_factor * std_combined
-    - Tính CDK2 Activity = mean_cytoplasm / mean_nucleus.
+    Measures brightness and CDK2 activity in nucleus and cytoplasm regions.
     """
     import cv2, numpy as np, matplotlib.pyplot as plt
 
-    # 1️⃣ Đọc ảnh
+    # Read image
     I = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
     if I is None:
         raise FileNotFoundError(f"Cannot read image: {image_path}")
 
-    # 2️⃣ Scale ảnh về 0-255 nếu cần
+    # Scale image to 0-255 if needed
     if np.issubdtype(I.dtype, np.floating):
         max_val = I.max()
         if max_val > 0:
@@ -961,40 +995,39 @@ def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_fact
     else:
         I = I.astype(np.float32)
 
-    # 3️⃣ Convert mask sang boolean
+    # Convert masks to boolean
     if nucleus_mask is None or cell_mask is None:
         raise ValueError("nucleus_mask or cell_mask is None")
     nuc_mask = (np.array(nucleus_mask) > 0)
     cell_mask_bin = (np.array(cell_mask) > 0)
 
-    # 4️⃣ Mask bào tương = cell - nucleus
+    # Cytoplasm mask = cell - nucleus
     cyto_mask = cell_mask_bin & (~nuc_mask)
 
-    # 5️⃣ Lấy pixel trong mask
+    # Extract pixel values within masks
     nuc_pixels = I[nuc_mask]
     cyto_pixels = I[cyto_mask]
 
     if nuc_pixels.size == 0 or cyto_pixels.size == 0:
         print("[WARN] Empty mask detected.")
 
-    # 6️⃣ Tính mean & std
+    # Calculate mean intensity and standard deviation
     mean_nuc = float(np.mean(nuc_pixels)) if nuc_pixels.size > 0 else 0.0
     mean_cyto = float(np.mean(cyto_pixels)) if cyto_pixels.size > 0 else 0.0
     combined_pixels = np.concatenate([nuc_pixels, cyto_pixels])
     std_combined = float(np.std(combined_pixels)) if combined_pixels.size > 0 else 0.0
 
-    # 7️⃣ Tính ngưỡng trắng & tỉ lệ pixel trắng
+    # Compute "white threshold" (unused now, for future updating)
     white_threshold = (mean_nuc + mean_cyto) / 2 + white_ratio_factor * std_combined
-    #white_ratio_nuc = float(np.sum(nuc_pixels > white_threshold)) / max(nuc_pixels.size, 1)
-    #white_ratio_cyto = float(np.sum(cyto_pixels > white_threshold)) / max(cyto_pixels.size, 1)
 
-    # 8️⃣ Tính CDK2 Activity (mean_cytoplasm / mean_nucleus)
+
+    # Compute CDK2 activity = mean_cytoplasm / mean_nucleus
     if mean_nuc > 0:
         cdk2_activity = mean_cyto / mean_nuc
     else:
         cdk2_activity = 0.0
 
-    # 9️⃣ Debug
+    # Show images and masks (for debug)
     if debug:
         print(f"[DEBUG] mean_nuc={mean_nuc:.2f}, mean_cyto={mean_cyto:.2f}")
         print(f"[DEBUG] threshold={white_threshold:.2f}")
@@ -1009,8 +1042,6 @@ def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_fact
     return {
         'mean_nucleus': mean_nuc,
         'mean_cytoplasm': mean_cyto,
-        #'white_ratio_nucleus': white_ratio_nuc,
-        #'white_ratio_cytoplasm': white_ratio_cyto,
         'cdk2_activity': cdk2_activity
     }
 
@@ -1018,38 +1049,41 @@ def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_fact
 @app.route('/api/track-cell-brightness', methods=['POST'])
 def track_cell_brightness():
     """
-    Tự động đo độ sáng trung bình & tỉ lệ trắng của nucleus & cytoplasm qua các timepoint,
-    hỗ trợ cả mask nhị phân hoặc contour polygon.
+    Automatically measures mean brightness & CDK2 activity of nucleus and cytoplasm
+    across multiple timepoints. Supports both binary masks or contour polygons as input.
     """
     try:
         data = request.json
 
-        # --- Lấy mask hoặc contour từ JSON ---
+        # Get input masks or contours from JSON
         nucleus_mask_input = data.get("nucleusMask")
         cell_mask_input = data.get("cellMask")
         nucleus_contour = data.get("nucleusContour")
         cytoplasm_contour = data.get("cytoplasmContour")
         output_filename = data.get("outputFilename", "tracking_results.xlsx")
 
-        # --- Xử lý mask ---
+        # Convert masks if provided
         if nucleus_mask_input is not None and cell_mask_input is not None:
-            # Convert sang np.array uint8, nhân 255 nếu JSON gửi 0/1
+            # Convert to np.array (uint8) and scale 0/1 to 0/255
             nucleus_mask = np.array(nucleus_mask_input, dtype=np.uint8)
             cell_mask = np.array(cell_mask_input, dtype=np.uint8)
             if np.max(nucleus_mask) <= 1: nucleus_mask *= 255
             if np.max(cell_mask) <= 1: cell_mask *= 255
+
+        # Convert contours to masks if provided
         elif nucleus_contour is not None and cytoplasm_contour is not None:
-            # Lấy kích thước từ ảnh đầu tiên trong CH002_FOLDER
+            # Load first image in CH002_FOLDER to get shape
             cytoplasm_files = sorted([f for f in os.listdir(CH002_FOLDER)
                                       if f.lower().endswith((".png", ".tif", ".jpg"))])
             if not cytoplasm_files:
                 return jsonify({"error": "No images found in cytoplasm folder"}), 400
+
             first_image = cv2.imread(os.path.join(CH002_FOLDER, cytoplasm_files[0]), cv2.IMREAD_GRAYSCALE)
             if first_image is None:
                 return jsonify({"error": "Failed to read first cytoplasm image"}), 500
             shape = first_image.shape
 
-            # Convert contour sang mask
+            # Helper: convert contour polygon to binary mask
             def contour_to_mask(contour, shape):
                 mask = np.zeros(shape, dtype=np.uint8)
                 pts = np.array(contour, dtype=np.int32).reshape((-1,1,2))
@@ -1058,10 +1092,11 @@ def track_cell_brightness():
 
             nucleus_mask = contour_to_mask(nucleus_contour, shape)
             cell_mask = contour_to_mask(cytoplasm_contour, shape)
+
         else:
             return jsonify({"error": "Missing mask or contour input"}), 400
 
-        # --- Lấy danh sách ảnh ---
+        # Get list of cytoplasm images
         cytoplasm_files = sorted([f for f in os.listdir(CH002_FOLDER)
                                   if f.lower().endswith((".png", ".tif", ".jpg"))])
         if not cytoplasm_files:
@@ -1069,13 +1104,15 @@ def track_cell_brightness():
 
         results = []
 
-        # --- Lặp qua từng timepoint ---
+
+        # Loop through images (timepoints)
         for time_idx, filename in enumerate(cytoplasm_files, start=1):
             image_path = os.path.join(CH002_FOLDER, filename)
             if not os.path.exists(image_path):
                 print(f"[WARN] Image not found: {filename}, skipping.")
                 continue
 
+            # Measure brightness & CDK2 activity using existing function
             stats = measure_both_whiteness(
                 image_path=image_path,
                 nucleus_mask=nucleus_mask,
@@ -1086,28 +1123,33 @@ def track_cell_brightness():
 
             results.append([
                 time_idx, filename,
-                stats['mean_nucleus'], #stats['white_ratio_nucleus'],
-                stats['mean_cytoplasm'], #stats['white_ratio_cytoplasm'],
-                stats['cdk2_activity']
+                stats['mean_nucleus'],       # Nucleus mean intensity
+                stats['mean_cytoplasm'],     # Cytoplasm mean intensity
+                stats['cdk2_activity']       # CDK2 activity
             ])
 
-        # --- Xuất Excel ---
+        # Export results to Excel
         os.makedirs(STATIC_FOLDER, exist_ok=True)
         output_path = os.path.join(STATIC_FOLDER, output_filename)
         wb = Workbook()
         ws = wb.active
         ws.title = "Tracking Results"
+
         headers = [
             "Timepoint", "Filename",
-            "Nucleus Mean Brightness", #"Nucleus White Ratio",
-            "Cytoplasm Mean Brightness", #"Cytoplasm White Ratio", 
+            "Nucleus Mean Brightness",   # could add "Nucleus White Ratio"
+            "Cytoplasm Mean Brightness", # could add "Cytoplasm White Ratio"
             "CDK2 Activity"
         ]
         ws.append(headers)
+
         for row in results:
             ws.append(row)
+
         wb.save(output_path)
 
+
+        # Return success response
         return jsonify({"message": "Tracking completed", "file": output_filename})
 
     except Exception as e:
@@ -1116,164 +1158,93 @@ def track_cell_brightness():
 
 
 
-import btrack
-import pandas as pd
-import json
-
-def measure_both_whiteness(image_path, nucleus_mask, cell_mask, white_ratio_factor=0.5, debug=False):
-    """
-    Đo độ sáng trung bình & tỉ lệ pixel sáng trong nhân và bào tương.
-    - Tự động scale ảnh về 8-bit nếu ảnh gốc là 16-bit hoặc float với giá trị >255.
-    - Bào tương = mask cytoplasm - mask nhân.
-    - White ratio tính theo ngưỡng chung cho cả nhân và bào tương:
-        threshold = trung bình (mean_nuc + mean_cyto) + white_ratio_factor * std_combined
-    - Tính CDK2 Activity = mean_cytoplasm / mean_nucleus.
-    """
-    import cv2, numpy as np, matplotlib.pyplot as plt
-
-    # 1️⃣ Đọc ảnh
-    I = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
-    if I is None:
-        raise FileNotFoundError(f"Cannot read image: {image_path}")
-
-    # 2️⃣ Scale ảnh về 0-255 nếu cần
-    if np.issubdtype(I.dtype, np.floating):
-        max_val = I.max()
-        if max_val > 0:
-            I = (I / max_val * 255).astype(np.float32)
-        else:
-            I = I.astype(np.float32)
-    elif I.dtype == np.uint16:
-        I = (I / 65535 * 255).astype(np.float32)
-    else:
-        I = I.astype(np.float32)
-
-    # 3️⃣ Convert mask sang boolean
-    if nucleus_mask is None or cell_mask is None:
-        raise ValueError("nucleus_mask or cell_mask is None")
-    nuc_mask = (np.array(nucleus_mask) > 0)
-    cell_mask_bin = (np.array(cell_mask) > 0)
-
-    # 4️⃣ Mask bào tương = cell - nucleus
-    cyto_mask = cell_mask_bin & (~nuc_mask)
-
-    # 5️⃣ Lấy pixel trong mask
-    nuc_pixels = I[nuc_mask]
-    cyto_pixels = I[cyto_mask]
-
-    if nuc_pixels.size == 0 or cyto_pixels.size == 0:
-        print("[WARN] Empty mask detected.")
-
-    # 6️⃣ Tính mean & std
-    mean_nuc = float(np.mean(nuc_pixels)) if nuc_pixels.size > 0 else 0.0
-    mean_cyto = float(np.mean(cyto_pixels)) if cyto_pixels.size > 0 else 0.0
-    combined_pixels = np.concatenate([nuc_pixels, cyto_pixels])
-    std_combined = float(np.std(combined_pixels)) if combined_pixels.size > 0 else 0.0
-
-    # 7️⃣ Tính ngưỡng trắng & tỉ lệ pixel trắng
-    white_threshold = (mean_nuc + mean_cyto) / 2 + white_ratio_factor * std_combined
-    #white_ratio_nuc = float(np.sum(nuc_pixels > white_threshold)) / max(nuc_pixels.size, 1)
-    #white_ratio_cyto = float(np.sum(cyto_pixels > white_threshold)) / max(cyto_pixels.size, 1)
-
-    # 8️⃣ Tính CDK2 Activity (mean_cytoplasm / mean_nucleus)
-    if mean_nuc > 0:
-        cdk2_activity = mean_cyto / mean_nuc
-    else:
-        cdk2_activity = 0.0
-
-    # 9️⃣ Debug
-    if debug:
-        print(f"[DEBUG] mean_nuc={mean_nuc:.2f}, mean_cyto={mean_cyto:.2f}")
-        print(f"[DEBUG] threshold={white_threshold:.2f}")
-        print(f"[DEBUG] CDK2 activity={cdk2_activity:.3f}")
-
-        fig, axes = plt.subplots(1, 3, figsize=(12,4))
-        axes[0].imshow(I, cmap='gray'); axes[0].set_title('Original Image (scaled)')
-        axes[1].imshow(nuc_mask, cmap='gray'); axes[1].set_title('Nucleus Mask')
-        axes[2].imshow(cyto_mask, cmap='gray'); axes[2].set_title('Cytoplasm Mask')
-        plt.show()
-
-    return {
-        'mean_nucleus': mean_nuc,
-        'mean_cytoplasm': mean_cyto,
-        #'white_ratio_nucleus': white_ratio_nuc,
-        #'white_ratio_cytoplasm': white_ratio_cyto,
-        'cdk2_activity': cdk2_activity
-    }
-
 
 @app.route('/api/run-btrack', methods=['POST'])
 def run_btrack_analysis():
+    """
+    Performs BTrack cell tracking and measures nucleus/cytoplasm brightness (CDK2 activity)
+    along a tracked path starting from a user click point.
+    """
     try:
-        data = request.json or {}
-        click_x = data.get("click_x")
-        click_y = data.get("click_y")
-        image_filename = data.get("image_filename")
-        start = int(data.get("start_timepoint", 0))
-        end = data.get("end_timepoint", None)
 
+        # Get input JSON parameters
+        data = request.json or {}
+        click_x = data.get("click_x")             # X coordinate of user click
+        click_y = data.get("click_y")             # Y coordinate of user click
+        image_filename = data.get("image_filename")  # Reference image to start tracking
+        start = int(data.get("start_timepoint", 0))  # Start frame index
+        end = data.get("end_timepoint", None)        # End frame index
+
+        # Validate required parameters
         if click_x is None or click_y is None or not image_filename:
             return {"error": "Missing click_x, click_y or image_filename"}, 400
 
-        # --- Load CH00 images ---
-        nucleus_files = sorted([f for f in os.listdir(CH00_FOLDER) if allowed_file(f)],
-                               key=natural_sort_key)
+        # Load and sort CH00 (nucleus) images
+        nucleus_files = sorted(
+            [f for f in os.listdir(CH00_FOLDER) if allowed_file(f)],
+            key=natural_sort_key
+        )
         if not nucleus_files:
             return {"error": "No CH00 images found"}, 404
 
+        # Find index of reference image
         try:
             first_frame_index = nucleus_files.index(image_filename)
         except ValueError:
             return {"error": "image_filename not found"}, 404
 
+        # Set end frame if not provided
         if end is None:
             end = len(nucleus_files) - 1
 
         used_files = nucleus_files[start:end + 1]
 
-        # --- Segment nuclei ---
+        # Segment nuclei for all frames
         all_masks = []
         for fname in used_files:
             imgpath = os.path.join(CH00_FOLDER, fname)
             mask, _, _ = segment_nuclei_cached(imgpath)
 
             if mask is None:
-                # Nếu không segment được thì tạo mask 0
+                # If segmentation fails, create empty mask
                 h, w = all_masks[-1].shape if all_masks else (512, 512)
                 all_masks.append(np.zeros((h, w), dtype=np.uint16))
                 continue
 
             all_masks.append(mask.astype(np.uint16))
 
-        segmentation_stack = np.stack(all_masks, axis=0)
+        segmentation_stack = np.stack(all_masks, axis=0)  # 3D stack: (time, height, width)
 
-        # --- Run BTrack ---
+        # Convert segmentation stack to BTrack objects
         all_objects = btrack.utils.segmentation_to_objects(
             segmentation_stack, properties=("area", "major_axis_length")
         )
 
+        # Run Bayesian tracking (BTrack)
         with btrack.BayesianTracker() as tracker:
             tracker.configure_from_file("config.json")
             tracker.append(all_objects)
+
+            # Set volume bounds for tracking (x, y, z ranges)
             first_img = cv2.imread(os.path.join(CH00_FOLDER, used_files[0]))
             tracker.volume = (
-                (0, first_img.shape[1]),
-                (0, first_img.shape[0]),
-                (-1e5, 1e5)
+                (0, first_img.shape[1]),  # x-range
+                (0, first_img.shape[0]),  # y-range
+                (-1e5, 1e5)               # z-range
             )
-            tracker.track()
-            tracker.optimize()
 
-            # Lấy label tại điểm click, nhưng KHÔNG báo lỗi nếu click ra ngoài
+            tracker.track()      # Perform tracking
+            tracker.optimize()   # Refine tracks
+
+            # Identify track corresponding to click
             click_offset = first_frame_index - start
             clicked_label = int(segmentation_stack[click_offset][int(click_y), int(click_x)])
             if clicked_label == 0:
-                clicked_label = None  # Không dùng nhưng không lỗi
+                clicked_label = None  # Clicked background, ignore
 
-            # Tìm track gần nhất điểm click, nếu không có → track rỗng
+            # Find closest track to click point
             best_track = None
             best_dist = 1e20
-
             for tr in tracker.tracks:
                 for i in range(len(tr.x)):
                     d = (tr.x[i] - click_x) ** 2 + (tr.y[i] - click_y) ** 2
@@ -1281,7 +1252,7 @@ def run_btrack_analysis():
                         best_dist = d
                         best_track = tr
 
-            # Nếu không tìm được track → tạo track rỗng
+            # If no track found, create a dummy track
             if best_track is None:
                 best_track = type("FakeTrack", (), {})()
                 best_track.x = [0] * len(used_files)
@@ -1289,7 +1260,7 @@ def run_btrack_analysis():
                 best_track.t = list(range(len(used_files)))
                 best_track.ID = 0
 
-        # --- Segment cytoplasm & measure ---
+        # Segment cytoplasm & measure brightness along the track
         ch002_files = sorted(os.listdir(CH002_FOLDER))
         excel_data = []
 
@@ -1301,7 +1272,7 @@ def run_btrack_analysis():
             mask_t = segmentation_stack[t]
             label = int(mask_t[int(round(y)), int(round(x))])
 
-            # Nếu không có nucleus thì ghi toàn 0
+            # If no nucleus detected, record zeros
             if label == 0:
                 excel_data.append({
                     "Timepoint": t,
@@ -1311,12 +1282,14 @@ def run_btrack_analysis():
                 })
                 continue
 
+            # Extract nucleus mask
             nucleus_mask = (mask_t == label).astype(np.uint8) * 255
             img_path = os.path.join(CH002_FOLDER, ch002_files[t])
 
+            # Segment cytoplasm from nucleus mask
             cyto_mask = segment_cytoplasm_from_nucleus(img_path, nucleus_mask)
 
-            # Nếu không segment được cyto → ghi 0
+            # If cytoplasm segmentation fails, record zeros
             if cyto_mask is None:
                 excel_data.append({
                     "Timepoint": t,
@@ -1326,6 +1299,7 @@ def run_btrack_analysis():
                 })
                 continue
 
+            # Measure brightness & CDK2 activity
             stats = measure_both_whiteness(img_path, nucleus_mask, cyto_mask)
 
             excel_data.append({
@@ -1335,7 +1309,8 @@ def run_btrack_analysis():
                 "CDK2_Activity": stats["cdk2_activity"]
             })
 
-        # --- Output Excel ---
+
+        # Export results to Excel
         df = pd.DataFrame(excel_data)
         output = BytesIO()
         df.to_excel(output, index=False)
@@ -1352,8 +1327,6 @@ def run_btrack_analysis():
         import traceback
         traceback.print_exc()
         return {"error": str(e)}, 500
-
-
 
 @app.route('/download/<path:filename>')
 def download_file(filename):

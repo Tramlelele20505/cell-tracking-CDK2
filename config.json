@@ -4,7 +4,7 @@
     "dt": 1.0,
     "measurements": 3,
     "states": 6,
-    "accuracy": 7.5,
+    "accuracy": 10.0,
     "prob_not_assign": 0.1,
     "max_lost": 5,
     "A": {
@@ -25,7 +25,7 @@
       ]
     },
     "P": {
-      "sigma": 150.0,
+      "sigma": 50.0,
       "matrix": [
         0.1, 0, 0, 0, 0, 0,
         0, 0.1, 0, 0, 0, 0,
@@ -42,7 +42,7 @@
       ]
     },
     "R": {
-      "sigma": 5.0,
+      "sigma": 50.0,
       "matrix": [
         1, 0, 0,
         0, 1, 0,
@@ -62,14 +62,14 @@
     ],
     "lambda_time": 5.0,
     "lambda_dist": 3.0,
-    "lambda_link": 1.0,
+    "lambda_link": 20.0,
     "lambda_branch": 50.0,  
     "eta": 1e-10,
     "theta_dist": 20.0,
     "theta_time": 5.0,
     "dist_thresh": 100,
-    "time_thresh": 3,
-    "apop_thresh": 2,
+    "time_thresh": 4,
+    "apop_thresh": 3,
     "segmentation_miss_rate": 0.1,
     "apoptosis_rate": 0.01,
     "relax": true

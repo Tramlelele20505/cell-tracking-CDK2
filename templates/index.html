@@ -701,15 +701,7 @@
                 padding: 12px 20px;
             }
         }
-        .btrack-panel {
-            padding: 20px;
-            margin: 0 20px 20px 20px;
-            background: #eef1ff;
-            border-radius: 12px;
-            text-align: center;a
-            border: 1px solid #d8deff;
-        }
-
+        
         .btrack-panel h3 {
             color: #4a4a68;
             margin-bottom: 8px;
@@ -788,7 +780,7 @@
                         </button>
                     </div>
 
-                    <!-- ⚡ Tracking controls -->
+                    <!--  Tracking controls -->
                     <div class="tracking-controls" id="tracking-controls" style="margin-top:10px;">
                         <div class="tracking-range" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                             <label for="start-timepoint-select">Start File:</label>
@@ -964,7 +956,7 @@
             document.getElementById('tracking-controls').style.display = 'none';
             document.getElementById('stats').style.display = 'none';
             document.getElementById('whiteness-results').style.display = 'none';
-            console.log("🔄 Cleared selection & mask");
+            console.log(" Cleared selection & mask");
         }
 
         function clearSelectionBoxes() {
@@ -975,12 +967,12 @@
         // =================== EXPORT ===================
         function exportToExcel() {
             if (typeof XLSX === 'undefined') {
-                alert('❌ Excel export library not loaded.');
+                alert(' Excel export library not loaded.');
                 return;
             }
 
             if (trackingResults.length === 0) {
-                alert('⚠️ No tracking results to export.');
+                alert(' No tracking results to export.');
                 return;
             }
 
@@ -1001,10 +993,10 @@
                 const filename = `whiteness_results_${timestamp}.xlsx`;
 
                 XLSX.writeFile(wb, filename);
-                alert(`✅ Excel exported: "${filename}"`);
+                alert(` Excel exported: "${filename}"`);
             } catch (error) {
                 console.error('Excel export error:', error);
-                alert('❌ Error exporting to Excel: ' + error.message);
+                alert(' Error exporting to Excel: ' + error.message);
             }
         }
 
@@ -1016,7 +1008,7 @@
             const click_y = Math.round((event.clientY - rect.top) * (img.naturalHeight / rect.height));
 
             if (!currentFilename) {
-                alert("❌ No filename loaded.");
+                alert(" No filename loaded.");
                 return;
             }
 
@@ -1033,18 +1025,18 @@
             .then(res => res.json())
             .then(data => {
     if (data.error) {
-        alert("❌ " + data.error);
+        alert(" " + data.error);
     } else {
-        console.log("✅ Nucleus contour:", data.contour);
+        console.log(" Nucleus contour:", data.contour);
 
         confirmedNucleusContour = data.contour;
 
-        // ✅ LƯU CENTROID ĐỂ GỬI QUA BTRACK
+        //  LƯU CENTROID ĐỂ GỬI QUA BTRACK
         selectedNucleus = {
             x: data.centroid.x,
             y: data.centroid.y
         };
-        console.log("✅ Selected nucleus centroid:", selectedNucleus);
+        console.log(" Selected nucleus centroid:", selectedNucleus);
 
         if (data.contour) {
             showContourOverlay("nucleus", data.contour);
@@ -1053,7 +1045,7 @@
         document.getElementById("confirm-btn").disabled = false;
     }
 })
-            .catch(err => console.error("❌ Nucleus selection error:", err));
+            .catch(err => console.error(" Nucleus selection error:", err));
         }
 
 
@@ -1065,13 +1057,13 @@
             isNucleusSelectionMode = true;
             document.getElementById('nucleus-mode-btn').classList.remove('btn-secondary');
             document.getElementById('cytoplasm-mode-btn').classList.add('btn-secondary');
-            console.log("🟢 Nucleus selection mode enabled. Click on nucleus image to select.");
+            console.log(" Nucleus selection mode enabled. Click on nucleus image to select.");
         }
 
         
         function confirmSelection() {
             if (!confirmedNucleusContour) {
-                alert("⚠️ No nucleus contour to confirm.");
+                alert(" No nucleus contour to confirm.");
                 return;
             }
 
@@ -1079,15 +1071,15 @@
             renderCytoplasmOverlay();
 
             document.getElementById('stats-text').textContent =
-                "🧬 Nucleus confirmed. Now press Cytoplasm Selection.";
+                " Nucleus confirmed. Now press Cytoplasm Selection.";
             document.getElementById('stats').style.display = 'block';
-            console.log("✅ Nucleus confirmed & nucleus contour drawn on ch002.");
+            console.log(" Nucleus confirmed & nucleus contour drawn on ch002.");
         }
 
 
         function setCytoplasmSelectionMode() {
             if (!currentFilename || !confirmedNucleusContour) {
-                alert("⚠️ Bạn cần chọn và confirm nhân trước khi chọn bào tương.");
+                alert(" Bạn cần chọn và confirm nhân trước khi chọn bào tương.");
                 return;
             }
 
@@ -1098,7 +1090,7 @@
             // Tắt nút Nucleus
             document.getElementById('nucleus-mode-btn').classList.add('btn-secondary');
 
-            console.log("🟠 Cytoplasm selection mode enabled. Click on cytoplasm image to select.");
+            console.log(" Cytoplasm selection mode enabled. Click on cytoplasm image to select.");
 
             fetch("/api/select-cytoplasm", {
                 method: "POST",
@@ -1111,13 +1103,13 @@
             .then(res => res.json())
             .then(data => {
                 if (data.error) {
-                    alert("❌ " + data.error);
+                    alert(" " + data.error);
                 } else {
                     confirmedCytoplasmContour = data.cytoplasm_contour;
                     renderCytoplasmOverlay(); // vẽ nucleus + cytoplasm trên panel ch002
                 }
             })
-            .catch(err => console.error("❌ Cytoplasm selection error:", err));
+            .catch(err => console.error(" Cytoplasm selection error:", err));
         }
 
 
@@ -1168,7 +1160,7 @@
             const cytoplasmImgPath = document.getElementById('cytoplasm-image').src;
 
             if (!confirmedContour) {
-                alert("⚠️ No contour selected. Please select and confirm a contour first.");
+                alert(" No contour selected. Please select and confirm a contour first.");
                 return;
             }
 
@@ -1199,7 +1191,7 @@
                             loadTimepoint();
                         } else {
                             isTracking = false;
-                            console.log("✅ Tracking complete", trackingResults);
+                            console.log(" Tracking complete", trackingResults);
                             exportToExcel();
                         }
                     } else {
@@ -1267,7 +1259,7 @@
             const currentFileNumber = currentTimepoint + 1;
 
             if (!endFileNumber || endFileNumber <= currentFileNumber) {
-                alert('❌ Invalid end file number.');
+                alert(' Invalid end file number.');
                 return;
             }
 
@@ -1276,8 +1268,8 @@
             trackingResults = [];
 
             document.getElementById('timepoint-info').textContent =
-                `🎯 Auto-tracking: File ${currentFileNumber} → ${endFileNumber}`;
-            console.log(`▶️ Auto-tracking started`);
+                ` Auto-tracking: File ${currentFileNumber} → ${endFileNumber}`;
+            console.log(` Auto-tracking started`);
 
             measureBothWhiteness(true);
         }
@@ -1339,15 +1331,13 @@
 
         
 
-
-
         function updateUploadStatus() {
             fetch('/api/all-cells')
                 .then(res => res.json())
                 .then(data => {
                     const statusText = document.getElementById('upload-status-text');
                     if (data.total_cells > 0) {
-                        statusText.innerHTML = `✅ <strong>${data.total_cells}</strong> image pairs ready for analysis`;
+                        statusText.innerHTML = ` <strong>${data.total_cells}</strong> image pairs ready for analysis`;
                         statusText.style.color = '#28a745';
                     } else {
                         statusText.innerHTML = 'No image folders uploaded yet.';
@@ -1387,7 +1377,7 @@
                     });
                 }
             } catch (error) {
-                console.error('❌ Failed to load timepoints:', error);
+                console.error(' Failed to load timepoints:', error);
             }
         }
     
@@ -1400,7 +1390,7 @@
     const end = parseInt(document.getElementById('end-timepoint-select').value);
 
     if (!selectedNucleus || !currentFilename) {
-        alert("❌ Bạn phải chọn 1 nhân và filename trước khi chạy BTrack!");
+        alert(" Bạn phải chọn 1 nhân và filename trước khi chạy BTrack!");
         return;
     }
 
@@ -1437,7 +1427,7 @@
         downloadLinkEl.textContent = "Download";
         downloadLinkEl.style.display = "inline-block";
 
-        statusEl.innerHTML = `<p style="color: green; font-weight: bold;">✅ BTrack xong, file Excel sẵn sàng!</p>`;
+        statusEl.innerHTML = `<p style="color: green; font-weight: bold;"> BTrack xong, file Excel sẵn sàng!</p>`;
 
         // Nếu muốn auto download luôn, uncomment dòng dưới
         // downloadLinkEl.click();
@@ -1445,7 +1435,7 @@
     } catch (error) {
         console.error('BTrack Error:', error);
         statusEl.innerHTML = `
-        <p style="color: red; font-weight: bold;">❌ Error: ${error.message}</p>
+        <p style="color: red; font-weight: bold;"> Error: ${error.message}</p>
         `;
         alert("Error running BTrack: " + error.message);
     } finally {
