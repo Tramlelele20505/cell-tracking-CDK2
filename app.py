@@ -3,7 +3,6 @@
 Cell Image Viewer Web Application
  
  Supports uploading cell nucleus images and corresponding nucleus+cytoplasm images
- run:C:/Users/HP/AppData/Local/Programs/Python/Python311/python.exe "d:/HCMUT/Nam 3/ky 1/DATH/code/Tranleenew1/cell-tracking-CDK2/app.py"
 """
 
 from flask import Flask, render_template, jsonify, request,send_file, send_from_directory, Response, flash, redirect, url_for
@@ -545,26 +544,19 @@ def segment_cytoplasm_from_nucleus(
     """
     It uses region growing and morphological operations to define the cytoplasm area around a given nucleus mask.
     """
+    import cv2
+    import numpy as np
 
     #  Read image & denoise
     img = cv2.imread(cytoplasm_img_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         return None
-    
-    #cytop_img=rgb_to_grayscale(img)
 
-    model = get_cyto_model()
-    eval_kwargs = {
-        'diameter': None,
-        'flow_threshold': 0.9,
-        'cellprob_threshold': -2,
-        'resample': True,
-        'normalize': True,
-        'interp': True,
-    }
-    
-    result = model.eval(img, **eval_kwargs)
-    mask = result[0].astype(np.uint8)
+    blur = cv2.fastNlMeansDenoising(img, None, h=denoise_h,
+                                    templateWindowSize=7, searchWindowSize=21)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    blur = clahe.apply(blur)
+    h, w = img.shape
 
     #  Dilate the nucleus 5–10 px so that the seed is greater than the nucleus
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -610,6 +602,9 @@ def segment_cytoplasm_from_nucleus(
     contours, _ = cv2.findContours(clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
+    max_cnt = max(contours, key=cv2.contourArea)
+    cytoplasm_mask = np.zeros_like(img, dtype=np.uint8)
+    cv2.drawContours(cytoplasm_mask, [max_cnt], -1, 255, -1)
 
     erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     cytoplasm_mask = cv2.erode(cytoplasm_mask, erode_kernel, iterations=3)
@@ -618,14 +613,16 @@ def segment_cytoplasm_from_nucleus(
     nucleus_area = np.sum(nucleus_mask > 0)
     img_area = img.shape[0] * img.shape[1]
 
-    cell_mask = np.where(mask == cell_id, 255, 0).astype(np.uint8)
+    min_expand_px = 5
+    max_expand_px = 22
 
 
     scale_factor = np.sqrt(nucleus_area / float(img_area))
     expand_px = int(min_expand_px + (max_expand_px - min_expand_px) * scale_factor)
     expand_px = max(min_expand_px, min(expand_px, max_expand_px))
 
-    return cell_mask
+    dist_map = cv2.distanceTransform(255 - nucleus_mask, cv2.DIST_L2, 5)
+    expanded_mask = (dist_map <= expand_px).astype(np.uint8) * 255
 
     #  take the intersection with the original cytoplasm mask
     final_mask = cv2.bitwise_and(cytoplasm_mask, expanded_mask)
