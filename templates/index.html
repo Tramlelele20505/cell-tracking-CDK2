@@ -1,4 +1,4 @@
-<!DOCTYPE html>
++<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -701,6 +701,26 @@
                 padding: 12px 20px;
             }
         }
+        
+        .btrack-panel h3 {
+            color: #4a4a68;
+            margin-bottom: 8px;
+        }
+
+        .btrack-panel p {
+            color: #6a6a82;
+            margin-bottom: 15px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .status-message {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 8px;
+            display: none; /* Ẩn ban đầu */
+        }
     </style>    
 </head>
 
@@ -725,12 +745,13 @@
                 </div>
                 <div class="upload-buttons">
                     <a href="/upload" class="btn-upload">📁 Upload Folders</a>
-                    <form action="/clear-uploads" method="post" style="display:inline;">
+                    <form action="/clear-uploads" method="post" style="display:inline-block;">
                         <button type="submit" class="btn-clear">🗑️ Clear All</button>
                     </form>
                 </div>
             </div>
         </div>
+        
 
         <div class="controls">
             <div class="timepoint-controls">
@@ -744,8 +765,6 @@
                         <button class="btn btn-secondary" onclick="setCytoplasmSelectionMode()" id="cytoplasm-mode-btn">
                             🔬 Cytoplasm Selection
                         </button>
-                        <button class="btn btn-secondary" onclick="togglePolygonMode()" id="polygon-mode-btn" 
-                            title="Click to draw connected lines (freeform polygon)">📐 Polygon</button>
                     </div>
 
                     <!-- Các nút chọn, xóa, đo -->
@@ -761,7 +780,7 @@
                         </button>
                     </div>
 
-                    <!-- ⚡ Tracking controls -->
+                    <!--  Tracking controls -->
                     <div class="tracking-controls" id="tracking-controls" style="margin-top:10px;">
                         <div class="tracking-range" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                             <label for="start-timepoint-select">Start File:</label>
@@ -777,23 +796,20 @@
                             </select>
                         </div>
 
-                        <div class="tracking-buttons" style="margin-top:8px;">
-                            <button class="btn btn-warning" onclick="startBrightnessTracking()" id="auto-track-btn">
-                                🎯 Start Auto-Tracking
+                        <div class="btrack-panel">
+                            <button class="btn" id="run-btrack-btn" onclick="runBtrack()">
+                                Run Tracking 
                             </button>
-                            <button class="btn btn-secondary" onclick="exportToExcel()">📄 Export to Excel</button>
-                        </div>
+                            <div id="btrack-status" class="status-message"></div>
 
-                        <div id="tracking-progress" style="display: none;">
-                            <div class="progress-bar">
-                                <div class="progress-fill" id="progress-fill"></div>
-                            </div>
-                            <p id="tracking-status">Processing...</p>
+                            <!-- Nút download Excel -->
+                            <a id="download-excel-link" class="btn " style="display:none;" download>
+                                Download Results
+                            </a>
                         </div>
                     </div>
-                </div>
-            </div>
-        </div>
+
+                    
 
 
         <div class="content">
@@ -910,6 +926,8 @@
         let isTracking = false;
         let trackingEndTimepoint = null;
         let currentFilename = null;  // giữ filename thật từ backend
+        let selectedNucleus = null;
+
 
 
         // =================== UI HELPERS ===================
@@ -938,7 +956,7 @@
             document.getElementById('tracking-controls').style.display = 'none';
             document.getElementById('stats').style.display = 'none';
             document.getElementById('whiteness-results').style.display = 'none';
-            console.log("🔄 Cleared selection & mask");
+            console.log(" Cleared selection & mask");
         }
 
         function clearSelectionBoxes() {
@@ -949,12 +967,12 @@
         // =================== EXPORT ===================
         function exportToExcel() {
             if (typeof XLSX === 'undefined') {
-                alert('❌ Excel export library not loaded.');
+                alert(' Excel export library not loaded.');
                 return;
             }
 
             if (trackingResults.length === 0) {
-                alert('⚠️ No tracking results to export.');
+                alert(' No tracking results to export.');
                 return;
             }
 
@@ -975,10 +993,10 @@
                 const filename = `whiteness_results_${timestamp}.xlsx`;
 
                 XLSX.writeFile(wb, filename);
-                alert(`✅ Excel exported: "${filename}"`);
+                alert(` Excel exported: "${filename}"`);
             } catch (error) {
                 console.error('Excel export error:', error);
-                alert('❌ Error exporting to Excel: ' + error.message);
+                alert(' Error exporting to Excel: ' + error.message);
             }
         }
 
@@ -990,7 +1008,7 @@
             const click_y = Math.round((event.clientY - rect.top) * (img.naturalHeight / rect.height));
 
             if (!currentFilename) {
-                alert("❌ No filename loaded.");
+                alert(" No filename loaded.");
                 return;
             }
 
@@ -1006,26 +1024,28 @@
             })
             .then(res => res.json())
             .then(data => {
-                if (data.error) {
-                    alert("❌ " + data.error);
-                } else {
-                    console.log("✅ Nucleus contour:", data.contour);
+    if (data.error) {
+        alert(" " + data.error);
+    } else {
+        console.log(" Nucleus contour:", data.contour);
 
-                    // 👉 Lưu contour nhân
-                    confirmedNucleusContour = data.contour;
+        confirmedNucleusContour = data.contour;
 
-                    // Vẽ overlay trên kênh nucleus
-                    if (data.contour) {
-                        showContourOverlay("nucleus", data.contour);
-                    }
+        //  LƯU CENTROID ĐỂ GỬI QUA BTRACK
+        selectedNucleus = {
+            x: data.centroid.x,
+            y: data.centroid.y
+        };
+        console.log(" Selected nucleus centroid:", selectedNucleus);
 
-                    // Cho phép confirm
-                    document.getElementById("confirm-btn").disabled = false;
-                }
-            })
-            .catch(err => {
-                console.error("❌ Network/Fetch error:", err);
-            });
+        if (data.contour) {
+            showContourOverlay("nucleus", data.contour);
+        }
+
+        document.getElementById("confirm-btn").disabled = false;
+    }
+})
+            .catch(err => console.error(" Nucleus selection error:", err));
         }
 
 
@@ -1037,13 +1057,13 @@
             isNucleusSelectionMode = true;
             document.getElementById('nucleus-mode-btn').classList.remove('btn-secondary');
             document.getElementById('cytoplasm-mode-btn').classList.add('btn-secondary');
-            console.log("🟢 Nucleus selection mode enabled. Click on nucleus image to select.");
+            console.log(" Nucleus selection mode enabled. Click on nucleus image to select.");
         }
 
         
         function confirmSelection() {
             if (!confirmedNucleusContour) {
-                alert("⚠️ No nucleus contour to confirm.");
+                alert(" No nucleus contour to confirm.");
                 return;
             }
 
@@ -1051,15 +1071,15 @@
             renderCytoplasmOverlay();
 
             document.getElementById('stats-text').textContent =
-                "🧬 Nucleus confirmed. Now press Cytoplasm Selection.";
+                " Nucleus confirmed. Now press Cytoplasm Selection.";
             document.getElementById('stats').style.display = 'block';
-            console.log("✅ Nucleus confirmed & nucleus contour drawn on ch002.");
+            console.log(" Nucleus confirmed & nucleus contour drawn on ch002.");
         }
 
 
         function setCytoplasmSelectionMode() {
             if (!currentFilename || !confirmedNucleusContour) {
-                alert("⚠️ Bạn cần chọn và confirm nhân trước khi chọn bào tương.");
+                alert(" Bạn cần chọn và confirm nhân trước khi chọn bào tương.");
                 return;
             }
 
@@ -1070,7 +1090,7 @@
             // Tắt nút Nucleus
             document.getElementById('nucleus-mode-btn').classList.add('btn-secondary');
 
-            console.log("🟠 Cytoplasm selection mode enabled. Click on cytoplasm image to select.");
+            console.log(" Cytoplasm selection mode enabled. Click on cytoplasm image to select.");
 
             fetch("/api/select-cytoplasm", {
                 method: "POST",
@@ -1083,13 +1103,13 @@
             .then(res => res.json())
             .then(data => {
                 if (data.error) {
-                    alert("❌ " + data.error);
+                    alert(" " + data.error);
                 } else {
                     confirmedCytoplasmContour = data.cytoplasm_contour;
                     renderCytoplasmOverlay(); // vẽ nucleus + cytoplasm trên panel ch002
                 }
             })
-            .catch(err => console.error("❌ Cytoplasm selection error:", err));
+            .catch(err => console.error(" Cytoplasm selection error:", err));
         }
 
 
@@ -1140,7 +1160,7 @@
             const cytoplasmImgPath = document.getElementById('cytoplasm-image').src;
 
             if (!confirmedContour) {
-                alert("⚠️ No contour selected. Please select and confirm a contour first.");
+                alert(" No contour selected. Please select and confirm a contour first.");
                 return;
             }
 
@@ -1171,7 +1191,7 @@
                             loadTimepoint();
                         } else {
                             isTracking = false;
-                            console.log("✅ Tracking complete", trackingResults);
+                            console.log(" Tracking complete", trackingResults);
                             exportToExcel();
                         }
                     } else {
@@ -1239,7 +1259,7 @@
             const currentFileNumber = currentTimepoint + 1;
 
             if (!endFileNumber || endFileNumber <= currentFileNumber) {
-                alert('❌ Invalid end file number.');
+                alert(' Invalid end file number.');
                 return;
             }
 
@@ -1248,8 +1268,8 @@
             trackingResults = [];
 
             document.getElementById('timepoint-info').textContent =
-                `🎯 Auto-tracking: File ${currentFileNumber} → ${endFileNumber}`;
-            console.log(`▶️ Auto-tracking started`);
+                ` Auto-tracking: File ${currentFileNumber} → ${endFileNumber}`;
+            console.log(` Auto-tracking started`);
 
             measureBothWhiteness(true);
         }
@@ -1311,15 +1331,13 @@
 
         
 
-
-
         function updateUploadStatus() {
             fetch('/api/all-cells')
                 .then(res => res.json())
                 .then(data => {
                     const statusText = document.getElementById('upload-status-text');
                     if (data.total_cells > 0) {
-                        statusText.innerHTML = `✅ <strong>${data.total_cells}</strong> image pairs ready for analysis`;
+                        statusText.innerHTML = ` <strong>${data.total_cells}</strong> image pairs ready for analysis`;
                         statusText.style.color = '#28a745';
                     } else {
                         statusText.innerHTML = 'No image folders uploaded yet.';
@@ -1359,96 +1377,70 @@
                     });
                 }
             } catch (error) {
-                console.error('❌ Failed to load timepoints:', error);
+                console.error(' Failed to load timepoints:', error);
             }
         }
-    async function startBrightnessTracking() {
-        // ✅ Kiểm tra đã chọn vùng nhân & bào tương
-        if (!confirmedNucleusContour || !confirmedCytoplasmContour) {
-            alert("⚠️ Bạn cần chọn và xác nhận vùng nhân & bào tương trước.");
-            return;
+    
+  async function runBtrack() {
+    console.log("▶ runBtrack() called");
+    const statusEl = document.getElementById('btrack-status');
+    const buttonEl = document.getElementById('run-btrack-btn');
+    const downloadLinkEl = document.getElementById('download-excel-link');
+    const start = parseInt(document.getElementById('start-timepoint-select').value);
+    const end = parseInt(document.getElementById('end-timepoint-select').value);
+
+    if (!selectedNucleus || !currentFilename) {
+        alert(" Bạn phải chọn 1 nhân và filename trước khi chạy BTrack!");
+        return;
+    }
+
+    statusEl.innerHTML = `
+        <div class="spinner"></div>
+        <p><strong>Processing...</strong></p>
+    `;
+    buttonEl.disabled = true;
+    downloadLinkEl.style.display = "none"; // ẩn link cũ
+
+    try {
+        const response = await fetch('/api/run-btrack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            start_timepoint: start,
+            end_timepoint: end,
+            click_x: selectedNucleus.x,
+            click_y: selectedNucleus.y,
+            image_filename: currentFilename
+        })
+        });
+
+        if (!response.ok) {
+        throw new Error(`Server error: ${response.status}`);
         }
 
-        // ✅ Lấy giá trị start và end từ dropdown
-        const start = parseInt(document.getElementById('start-timepoint-select').value);
-        const end = parseInt(document.getElementById('end-timepoint-select').value);
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
 
-        if (isNaN(start) || isNaN(end) || start < 0 || end < start) {
-            alert("❌ Vui lòng chọn khoảng file hợp lệ (VD: File 1 → File 10).");
-            return;
-        }
+        // Thiết lập link download sẵn sàng
+        downloadLinkEl.href = url;
+        downloadLinkEl.download = `btrack_results_${currentFilename}.xlsx`;
+        downloadLinkEl.textContent = "Download";
+        downloadLinkEl.style.display = "inline-block";
 
-        try {
-            const res = await fetch('/api/track-cell-brightness', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    nucleusContour: confirmedNucleusContour,
-                    cytoplasmContour: confirmedCytoplasmContour,
-                    start_timepoint: start,
-                    end_timepoint: end
-                })
-            });
+        statusEl.innerHTML = `<p style="color: green; font-weight: bold;"> BTrack xong, file Excel sẵn sàng!</p>`;
 
-            const data = await res.json();
-            console.log('Server response:', data); // 🔹 debug
+        // Nếu muốn auto download luôn, uncomment dòng dưới
+        // downloadLinkEl.click();
 
-            if (data.error) {
-                alert("❌ " + data.error);
-                return;
-            }
-
-            const trackingPanel = document.getElementById('tracking-controls');
-            if (!trackingPanel) {
-                console.warn("Tracking panel not found. Link sẽ không hiển thị.");
-                return;
-            }
-
-            // Xóa link cũ nếu có
-            const oldLink = document.getElementById('excel-download-link');
-            if (oldLink) oldLink.remove();
-
-            // Tạo link mới
-            let downloadLink = document.createElement('a');
-            downloadLink.id = 'excel-download-link';
-            downloadLink.style.display = 'block';
-            downloadLink.style.marginTop = '10px';
-            downloadLink.style.fontWeight = '600';
-            downloadLink.style.color = '#007bff';
-            downloadLink.style.textDecoration = 'none';
-
-            if (data.fileContent) {
-                // Nếu server trả base64
-                const byteCharacters = atob(data.fileContent);
-                const byteNumbers = new Array(byteCharacters.length);
-                for (let i = 0; i < byteCharacters.length; i++) {
-                    byteNumbers[i] = byteCharacters.charCodeAt(i);
-                }
-                const byteArray = new Uint8Array(byteNumbers);
-                const blob = new Blob([byteArray], {
-                    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                });
-                const downloadUrl = URL.createObjectURL(blob);
-                downloadLink.href = downloadUrl;
-                downloadLink.download = data.fileName || 'whiteness.xlsx';
-                downloadLink.textContent = `📄 Tải file Excel: ${downloadLink.download}`;
-            } else if (data.file) {
-                // Nếu server trả đường dẫn file
-                downloadLink.href = `/download/${encodeURIComponent(data.file)}`;
-                downloadLink.download = data.file;
-                downloadLink.textContent = `📄 Tải file Excel: ${data.file}`;
-            } else {
-                alert("❌ Server không trả file Excel hợp lệ.");
-                return;
-            }
-
-            trackingPanel.appendChild(downloadLink);
-            alert("✅ Tracking hoàn tất. File Excel sẵn sàng để tải về.");
-
-        } catch (err) {
-            console.error('❌ Tracking error:', err);
-            alert('❌ Lỗi khi tracking. Kiểm tra console để xem chi tiết.');
-        }
+    } catch (error) {
+        console.error('BTrack Error:', error);
+        statusEl.innerHTML = `
+        <p style="color: red; font-weight: bold;"> Error: ${error.message}</p>
+        `;
+        alert("Error running BTrack: " + error.message);
+    } finally {
+        buttonEl.disabled = false;
+    }
     }
 
 
